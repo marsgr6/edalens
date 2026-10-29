@@ -236,6 +236,24 @@ python -m streamlit run my_viz_plotly.py --server.port 8000 --server.address 0.0
 
 ---
 
+## Releasing to PyPI
+
+Releases are published by `.github/workflows/publish.yml` through PyPI
+[Trusted Publishing](https://docs.pypi.org/trusted-publishers/), so no API token
+is stored anywhere. Bump `version` in `pyproject.toml`, commit, then push a
+matching tag:
+
+```bash
+git tag v0.1.1
+git push edalens v0.1.1
+```
+
+The workflow checks that the tag matches the version, builds and checks the
+sdist and wheel, smoke-tests the wheel in a clean environment and uploads it.
+A version can only be published once.
+
+---
+
 ## Tech stack
 
 Streamlit · streamlit-option-menu · pandas · NumPy (1.26.4) · Plotly · SciPy ·
