@@ -62,7 +62,7 @@ tests cover them (`tests/test_transformations.py`,
 | 5.3 ✅ | 🟠 | Every preprocessing step is implemented twice (inline in views and in `apply_operations`). The two copies can drift. | Always go through `apply_operations` (single op on current df in direct mode, full replay in tracking mode). |
 | 5.4 | 🟠 | Forecasting single- vs multi-variable branches are copy-pasted (~50 lines each); same for anomaly/trend. | Loop over `selected_vars` once; single variable is just a list of one. |
 | 5.5 ✅ | 🟢 | After every operation the same three lines recompute `filtered_df` / numeric / categorical columns. | Helper `set_working_df(df)`. |
-| 5.6 | 🟢 | `utils/plot_utils.py` contains only `import numpy`; `views/` and `utils/` have no `__init__.py`. | Remove or populate; add `__init__.py` for clarity. |
+| 5.6 | 🟢 | `utils/plot_utils.py` now holds the regression figure builder (first plot moved out of the view); `views/` and `utils/` have no `__init__.py`. | Remove or populate; add `__init__.py` for clarity. |
 | 5.7 | 🟢 | Long `if/elif` chains for slider ranges and unit maps. | Small config dicts: `{"Daily": ("days", 7, 365, 30), …}`. |
 
 ## 6. User experience

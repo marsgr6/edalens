@@ -10,6 +10,11 @@ import warnings
 import re
 from scipy.stats import t
 
+from utils.plot_utils import (
+    FIT_METHODS, HEATMAP_ROW_ORDERS, HEATMAP_SCALINGS, MARGINAL_KINDS,
+    numeric_heatmap_figure, regression_figure,
+)
+
 warnings.filterwarnings('ignore')
 
 def visualization():
@@ -136,7 +141,7 @@ def visualization():
         risk_it_all = st.checkbox("Risk It All (Unlock all variable mappings)", value=False)
 
     # --- VARIABLE POOL (VISUAL DISPLAY) ---
-    with st.expander("🗂️ Variables Pool", expanded=True):
+    with st.expander("🗂️ Variables Pool", expanded=False):
         cat_badges = "".join([f"<span style='background-color:#FF7F0E; color:white; padding:4px 10px; border-radius:12px; margin:4px; display:inline-block; font-size:12px;'>{c} (cat)</span>" for c in categorical_cols])
         num_badges = "".join([f"<span style='background-color:#1F77B4; color:white; padding:4px 10px; border-radius:12px; margin:4px; display:inline-block; font-size:12px;'>{n} (num)</span>" for n in numeric_cols])
         
@@ -1364,6 +1369,15 @@ def visualization():
                     size_max = st.slider("Max Marker Size", 5, 100, 10, 5)
                     enhance_size = st.selectbox("Enhance Size Differences", options=["None", "Min-Max Normalize"], index=0)
 
+                    plot_3d = st.checkbox("3D Scatter", value=False, help="Add a Z variable and rotate the plot with the mouse.")
+                    var_z, show_projections = None, False
+                    if plot_3d:
+                        z_options = [c for c in (data.columns.tolist() if risk_it_all else numeric_cols) if c not in (var_x, var_y)]
+                        if z_options:
+                            var_z = st.selectbox("Z Variable", z_options, index=0)
+                            show_projections = st.checkbox("Show Projections on Walls", value=False,
+                                                           help="Shadow of each point on the XY, XZ and YZ planes.")
+
                     def add_category_order(var_name, label):
                         if var_name != 'None' and var_name in plot_data.columns and plot_data[var_name].dtype.name in ['object', 'category']:
                             custom_order = st.multiselect(f"Custom Order for {label} ({var_name})", options=plot_data[var_name].dropna().unique().tolist(), default=sorted(plot_data[var_name].dropna().unique().tolist()))
@@ -1409,7 +1423,20 @@ def visualization():
                     scatter_kwargs['size'] = np.full(len(plot_data), 1)
                     scatter_kwargs['size_max'] = size_max
 
-                fig = px.scatter(**scatter_kwargs)
+                if plot_3d:
+                    if var_z is None:
+                        st.warning("3D scatter needs a third numeric column for Z besides X and Y.")
+                        return
+                    ignored = [label for label, key in (("Facet Column", "facet_col"), ("Facet Row", "facet_row")) if scatter_kwargs.pop(key, None)]
+                    if ignored:
+                        st.info(f"{' and '.join(ignored)} not available in 3D; showing all data in one plot.")
+                    scatter_kwargs.update(z=var_z, height=700)
+                    fig = px.scatter_3d(**scatter_kwargs)
+                    if show_projections:
+                        fig.update_traces(projection=dict(x=dict(show=True, opacity=0.3), y=dict(show=True, opacity=0.3), z=dict(show=True, opacity=0.3)))
+                    fig.update_layout(scene=dict(xaxis_title=var_x, yaxis_title=var_y, zaxis_title=var_z), margin=dict(l=0, r=0, t=40, b=0))
+                else:
+                    fig = px.scatter(**scatter_kwargs)
                 st.plotly_chart(fig, use_container_width=True)
 
             elif plot_type == 'catplot':
@@ -1495,84 +1522,96 @@ def visualization():
                 var_x = global_var_x
                 var_y = global_var_y
                 hue = global_hue if global_hue else 'None'
-                plot_data = data.copy()
-                fig = go.Figure()
 
                 with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
-                    order = st.selectbox("Order of Polynomial Fit", [1, 2, 3], index=0)
-                    ci_level = st.selectbox("Confidence Interval (%)", [68, 90, 95, 99], index=2)
+                    methods = st.multiselect("Fit Methods", list(FIT_METHODS), default=["Polynomial"],
+                                             help="Polynomial: OLS fit with confidence band. LOWESS: locally weighted smoothing (no band).")
+                    order, ci_level, lowess_frac = 1, 95, 0.66
+                    if "Polynomial" in methods:
+                        order = st.selectbox("Order of Polynomial Fit", [1, 2, 3], index=0)
+                        ci_level = st.selectbox("Confidence Interval (%)", [68, 90, 95, 99], index=2)
+                    if "LOWESS" in methods:
+                        lowess_frac = st.slider("LOWESS Fraction (smoothing span)", 0.05, 1.0, 0.66, 0.01,
+                                                help="Share of points used for each local fit; larger is smoother.")
+                    marginal_options = ["None", *MARGINAL_KINDS]
+                    marginal_x = st.selectbox("Marginal Plot for X", marginal_options, index=0)
+                    marginal_y = st.selectbox("Marginal Plot for Y", ["Same as X", *marginal_options], index=0,
+                                              help="Defaults to the X choice so both axes get a marginal; pick another kind or None to change it.")
+                    if marginal_y == "Same as X":
+                        marginal_y = marginal_x
                     use_hue = st.checkbox("Use Hue for Fits?", value=True)
 
-                if use_hue and hue != 'None' and hue in plot_data.columns: groups = plot_data[hue].dropna().unique()
-                else: groups = [None]
-
-                for idx, g in enumerate(groups):
-                    if g is not None and hue in plot_data.columns: subset = plot_data[plot_data[hue] == g]
-                    else: subset = plot_data
-
-                    X, Y = subset[var_x], subset[var_y]
-                    mask = (~X.isna()) & (~Y.isna())
-                    X, Y = X[mask], Y[mask]
-                    if X.empty or Y.empty: continue
-
-                    fig.add_trace(go.Scatter(x=X, y=Y, mode='markers', marker=dict(color=PALETTE[idx % len(PALETTE)], size=5), name=str(g) if g is not None else "Data", showlegend=True))
-                    
-                    import statsmodels.api as sm
-                    X_design = sm.add_constant(np.vander(X, N=order+1, increasing=True))
-                    model = sm.OLS(Y, X_design).fit()
-
-                    x_pred = np.linspace(X.min(), X.max(), 100)
-                    X_pred_design = sm.add_constant(np.vander(x_pred, N=order+1, increasing=True))
-                    y_pred = model.predict(X_pred_design)
-                    pred_summary = model.get_prediction(X_pred_design).summary_frame(alpha=(1 - ci_level / 100))
-
-                    fig.add_trace(go.Scatter(x=x_pred, y=y_pred, mode='lines', line=dict(color=PALETTE[idx % len(PALETTE)]), name=f"Fit: {g}" if g is not None else "Fit", showlegend=True))
-                    fig.add_trace(go.Scatter(x=np.concatenate([x_pred, x_pred[::-1]]), y=np.concatenate([pred_summary['mean_ci_upper'], pred_summary['mean_ci_lower'][::-1]]), fill='toself', fillcolor=f"rgba(0,100,80,0.2)", line=dict(color='rgba(255,255,255,0)'), hoverinfo="skip", showlegend=False))
-
-                fig.update_layout(title="Regression Plot with Confidence Interval", xaxis_title=var_x, yaxis_title=var_y, width=800, height=600)
+                try:
+                    fig = regression_figure(
+                        data, var_x, var_y,
+                        hue=hue if use_hue and hue != 'None' else None,
+                        methods=methods, order=order, ci_level=ci_level, lowess_frac=lowess_frac,
+                        marginal_x=None if marginal_x == "None" else marginal_x,
+                        marginal_y=None if marginal_y == "None" else marginal_y,
+                        palette=PALETTE,
+                    )
+                except ValueError as exc:
+                    st.warning(str(exc))
+                    return
                 st.plotly_chart(fig, use_container_width=True)
 
             elif plot_type == 'heatmap':
                 cat_var = global_var_x if global_var_x != 'None' else None
                 num_var = global_var_y
+                plot_data = data.copy()
 
                 with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
-                    colormap = st.selectbox("Select Colormap", ["Viridis", "Plasma", "Inferno", "Magma", "Cividis", "Blues", "Reds", "Greens"], index=0)
-                    plot_data = data.copy()
+                    colormap = st.selectbox("Select Colormap", ["Viridis", "Plasma", "Inferno", "Magma", "Cividis", "Blues", "Reds", "Greens", "RdBu_r"], index=0)
                     if cat_var is not None and cat_var in plot_data.columns:
                         custom_order = st.multiselect(f"Custom Order for {cat_var}", options=plot_data[cat_var].dropna().unique().tolist(), default=sorted(plot_data[cat_var].dropna().unique().tolist()))
                         if custom_order: plot_data[cat_var] = pd.Categorical(plot_data[cat_var], categories=custom_order, ordered=True)
+                    else:
+                        heatmap_numeric = [c for c in numeric_cols if c in plot_data.columns]
+                        heatmap_cols = st.multiselect("Numeric Columns", heatmap_numeric, default=heatmap_numeric,
+                                                      help="Non-numeric columns are ignored.")
+                        scaling = st.selectbox("Scale Each Column", list(HEATMAP_SCALINGS), index=1,
+                                               help="Z-score / Min-max make columns with different units comparable. Hover always shows the original value.")
+                        row_order = st.selectbox("Observation Order", list(HEATMAP_ROW_ORDERS), index=0,
+                                                 help="Cluster groups similar observations together.")
+                        sort_by, descending = None, False
+                        if row_order == "Sort by column":
+                            sort_by = st.selectbox("Sort Observations By", plot_data.columns.tolist())
+                            descending = st.checkbox("Descending", value=False)
+                        cluster_columns = st.checkbox("Cluster Columns", value=False, help="Place similar variables next to each other.")
+                        variables_on = st.radio("Variables On", ["Y axis", "X axis"], horizontal=True)
 
                 if cat_var is None:
-                    if not all(pd.api.types.is_numeric_dtype(plot_data[col]) for col in plot_data.columns):
-                        st.warning("All columns must be numerical for Heatmap without a categorical variable.")
+                    try:
+                        fig = numeric_heatmap_figure(
+                            plot_data, columns=heatmap_cols, scaling=scaling, row_order=row_order,
+                            sort_by=sort_by, descending=descending, cluster_columns=cluster_columns,
+                            variables_on="y" if variables_on == "Y axis" else "x", colorscale=colormap,
+                        )
+                    except ValueError as exc:
+                        st.warning(str(exc))
                         return
-                    numerical_data = plot_data.select_dtypes(include=np.number)
-                    heatmap_data = numerical_data.transpose()
-                    x_labels = [f"data{i}" for i in range(len(numerical_data))]
-                    y_labels = numerical_data.columns.tolist()
-                    title = "Heatmap Numerical: Observations vs Variables"
-                    height = max(600, len(y_labels) * 20)
-                else:
-                    if num_var is None or not pd.api.types.is_numeric_dtype(plot_data[num_var]):
-                        st.warning(f"Please select a valid numerical Y variable for Heatmap mode.")
-                        return
-                    
-                    is_categorical = False
-                    if isinstance(plot_data[cat_var].dtype, pd.CategoricalDtype): is_categorical = True
-                    elif plot_data[cat_var].dtype.name == 'object': is_categorical = True
-                    if not is_categorical:
-                        st.warning(f"Selected X variable '{cat_var}' must be categorical or object type.")
-                        return
+                    st.plotly_chart(fig, use_container_width=True)
+                    return
 
-                    plot_data['obs_id'] = [f"Obs {i}" for i in range(len(plot_data))]
-                    heatmap_data = plot_data.pivot(columns='obs_id', values=num_var, index=cat_var)
-                    x_labels = heatmap_data.columns.tolist()
-                    y_labels = heatmap_data.index.tolist()
-                    title = f"Heatmap Numerical: {cat_var} vs Observations"
-                    height = max(600, len(y_labels) * 20)
+                if num_var is None or not pd.api.types.is_numeric_dtype(plot_data[num_var]):
+                    st.warning(f"Please select a valid numerical Y variable for Heatmap mode.")
+                    return
 
-                fig = px.imshow(heatmap_data, labels=dict(x="Observations", y="Variables" if cat_var is None else cat_var, color="Value"), x=x_labels, y=y_labels, color_continuous_scale=colormap, title=title, width=800, height=height, aspect='auto')
+                is_categorical = False
+                if isinstance(plot_data[cat_var].dtype, pd.CategoricalDtype): is_categorical = True
+                elif plot_data[cat_var].dtype.name == 'object': is_categorical = True
+                if not is_categorical:
+                    st.warning(f"Selected X variable '{cat_var}' must be categorical or object type.")
+                    return
+
+                plot_data['obs_id'] = [f"Obs {i}" for i in range(len(plot_data))]
+                heatmap_data = plot_data.pivot(columns='obs_id', values=num_var, index=cat_var)
+                x_labels = heatmap_data.columns.tolist()
+                y_labels = heatmap_data.index.tolist()
+                title = f"Heatmap Numerical: {cat_var} vs Observations"
+                height = max(600, len(y_labels) * 20)
+
+                fig = px.imshow(heatmap_data, labels=dict(x="Observations", y=cat_var, color="Value"), x=x_labels, y=y_labels, color_continuous_scale=colormap, title=title, width=800, height=height, aspect='auto')
                 fig.update_layout(margin=dict(l=50, r=50, t=100, b=50), yaxis=dict(tickfont=dict(size=10)))
                 st.plotly_chart(fig, use_container_width=True)
 

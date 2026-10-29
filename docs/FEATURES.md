@@ -56,14 +56,14 @@ sidebar to allow any column in any role.
 | histogram | One numeric distribution | layer/dodge/stack, count/probability/percent/density, bars/step |
 | density 1 | Smoothed 1-D distribution (KDE) | layer/stack, cumulative, normalize |
 | density 2 | Joint distribution of two numerics | 2-D histogram or KDE contours |
-| scatter | Two numerics | Symbol by category, size by numeric (min-max enhance) |
+| scatter | Two numerics, or three in 3D | Symbol by category, size by numeric (min-max enhance). **3D Scatter** adds a Z variable (rotatable; colour, symbol, size and opacity still apply; facets are not available in 3D) with optional projections onto the walls |
 | catplot | Numeric vs category, every point | strip or swarm |
 | missingno | Missing-data structure | matrix, bars, heatmap (nullity correlation), dendrogram |
 | correlation | Correlation matrix of numerics | — |
 | clustermap | Correlation matrix reordered by hierarchical clustering | z-score / standard scale |
 | pairplot | Scatter matrix with KDE diagonals | — |
-| regression | Scatter + fitted line | Polynomial order 1–3, CI 68/90/95/99 % |
-| heatmap | Numeric grid, or category × numeric | Colormap choice |
+| regression | Scatter + fitted line(s) | Fit methods: Polynomial (order 1–3, CI 68/90/95/99 %) and/or LOWESS (adjustable smoothing fraction, no CI; dashed when shown with the polynomial). Optional marginal plots: rug, histogram, box or violin, one per hue group (box/violin panels grow with the number of groups and show outliers as jittered points); the Y marginal defaults to the X choice and can be changed or turned off |
+| heatmap | Numeric columns × observations (X = None), or category × numeric | Colormap choice. Numeric mode: pick columns (non-numeric ones are ignored), scale each column (None / Z-score / Min-max; hover shows original values), order observations (original, sort by a column, or hierarchical clustering up to 5,000 rows), cluster columns, variables on the Y or X axis |
 | ridges | Stacked densities by category or column | Falls back to numeric ridges with > 100 categories |
 
 Many plots support **custom category order** for X, color and facets — useful for

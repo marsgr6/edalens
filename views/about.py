@@ -175,7 +175,7 @@ def about():
 
         ![](https://raw.githubusercontent.com/marsgr6/r-scripts/refs/heads/master/imgs/ridges_num_myvp.png)
 
-        - Heatmap (all columns numerical, remove columns in preprocessing from the [time series dataset](https://github.com/marsgr6/r-scripts/blob/master/data/viz_data/ts_data_precipitation.csv)):
+        - Heatmap (with X set to None it plots every numeric column; non-numeric columns are ignored. Example from the [time series dataset](https://github.com/marsgr6/r-scripts/blob/master/data/viz_data/ts_data_precipitation.csv)):
 
         ![](https://raw.githubusercontent.com/marsgr6/r-scripts/refs/heads/master/imgs/heatnum_myvp.png)
 
@@ -208,7 +208,7 @@ def about():
 - **Data Requirements**:
   - Supports both categorical and numerical data.
   - Time series mode requires an object column (e.g., dates) for the x-axis and a numerical column for the y-axis.
-  - Raw Heatmap mode requires either all numerical columns or a categorical and numerical variable pair.
+  - Raw Heatmap mode plots the numeric columns (X = None; non-numeric columns are ignored, columns can be scaled, sorted or clustered) or a categorical and numerical variable pair.
   - Warnings are displayed if data types don’t meet requirements for specific modes.
 
 - **Visualizations**

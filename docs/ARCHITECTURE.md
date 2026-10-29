@@ -58,7 +58,7 @@ are not imported, and logs to a temporary file.
 | `views/time_series.py` | 1219 | Time series loader and ten analysis sections in one function |
 | `views/about.py` | 256 | Static manual / marketing text |
 | `utils/data_processing.py` | 316 | Single implementation of every operation (`apply_operation`), replay (`apply_operations`), and atomic session updates (`run_operation`, `undo_last_operation`, `set_working_df`) |
-| `utils/plot_utils.py` | 0 | Contains only `import numpy` — unused |
+| `utils/plot_utils.py` | 379 | Streamlit-free figure builders: `regression_figure` (polynomial/LOWESS fits, marginal rug/histogram/box/violin) and `numeric_heatmap_figure` (per-column scaling, sorting/clustering), unit-tested in `tests/test_plot_utils.py` |
 | `visualization.py`, `time_series.py` (root) | 2630 / 1219 | Legacy copies, not imported anywhere |
 
 ## Session state
