@@ -22,7 +22,7 @@ def _run(operation, success_message):
     return df
 
 def home():
-    st.subheader("🏠 Home: Data Upload & Selection")
+    st.subheader("🏠 Data Upload & Selection")
 
     uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
     st.markdown("**Or load a CSV from a GitHub link:**")

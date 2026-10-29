@@ -6,10 +6,12 @@
 >>> app.stop()
 
 In Jupyter, ``edaviz.walk(df)`` shows the app inside the notebook with ``df`` loaded.
+In Google Colab, ``edaviz.run_colab()`` also opens a public localtunnel link.
 """
 
 from importlib.metadata import PackageNotFoundError, version
 
+from edaviz.colab import ColabApp, run_colab
 from edaviz.launcher import EDAVizServer, LaunchError, show
 from edaviz.notebook import NotebookApp, walk
 
@@ -18,4 +20,13 @@ try:
 except PackageNotFoundError:  # Imported from a checkout without installation.
     __version__ = "0+unknown"
 
-__all__ = ["EDAVizServer", "LaunchError", "NotebookApp", "show", "walk", "__version__"]
+__all__ = [
+    "ColabApp",
+    "EDAVizServer",
+    "LaunchError",
+    "NotebookApp",
+    "run_colab",
+    "show",
+    "walk",
+    "__version__",
+]

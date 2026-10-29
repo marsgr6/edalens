@@ -22,7 +22,7 @@ quick visualization prototyping.
 |---|---|
 | **Home** | Upload a CSV or load one from GitHub · keep/drop columns · set numeric vs categorical types · random subsample · melt (wide → long) · extract date features (Year, Month, Day, DayOfWeek, Hour) · optional undo history · download the processed CSV |
 | **Missing Data Imputation** | Per-column missing counts/percentages · drop rows with any NaN · impute (KNN for numeric, mode for categorical) |
-| **Visualization** | 15 plot types: bars, boxes (box/violin), lineplot, histogram, density 1 (1-D KDE), density 2 (2-D hist/KDE), scatter, catplot (strip/swarm), missingno-style plots, correlation, clustermap, pairplot, regression (poly order 1–3 + CI), heatmap, ridges. Shared X / Y / Color / Facet-col / Facet-row / Size mapping, custom category order, high-cardinality warnings |
+| **Visualization** | 15 plot types: bars, boxes (box/violin), lineplot, histogram, density 1 (1-D KDE), density 2 (2-D hist/KDE), scatter (2-D or 3-D), catplot (strip/swarm), missingno-style plots, correlation, clustermap, pairplot, regression (poly order 1–3 + CI and/or LOWESS, marginal rug/histogram/box/violin), heatmap (numeric columns with scaling/sorting/clustering), ridges. Shared X / Y / Color / Facet-col / Facet-row / Size mapping, custom category order, high-cardinality warnings |
 | **Time Series** | Own data loader (date column + day-first/month-first) · resampling (hourly → yearly, mean/sum) and rolling smoothing · multi-variable mode · decomposition (statsmodels or Prophet) + ACF/PACF · Isolation-Forest anomaly detection · temporal profiles · calendar heatmaps · profile heatmaps · Prophet forecasting · Prophet changepoint analysis · linear/polynomial trend |
 | **About** | Built-in user manual with screenshots and example datasets |
 
@@ -104,9 +104,29 @@ app.stop()                       # stops the server and deletes the temporary da
 
 The app is embedded with an iframe pointing at `127.0.0.1`, so it works in
 local Jupyter Notebook, JupyterLab and VS Code. It does not work when the
-kernel runs on another machine (JupyterHub, a remote server, Colab). The DataFrame is pickled to a private temporary file, and
+kernel runs on another machine (JupyterHub, a remote server); in Colab use
+`run_colab()` below. The DataFrame is pickled to a private temporary file, and
 every browser session of that app starts from it; "Reset All" or a new upload
 replaces it for that session. Each `walk()` call starts its own server.
+
+**Google Colab**: open
+[`notebooks/colab_edaviz.ipynb`](notebooks/colab_edaviz.ipynb) in Colab, or run:
+
+```python
+!git clone -q --depth 1 -b fix/transformation-integrity https://github.com/danielTeniente/deaviz.git /content/deaviz
+%cd /content/deaviz
+
+import edaviz
+app = edaviz.run_colab()   # installs requirements once, starts the app, opens a localtunnel link
+app                        # shows the link and the tunnel password
+app.stop()                 # closes the link and stops the app
+```
+
+Colab can't open `127.0.0.1` in your browser, so `run_colab()` exposes the app
+through [localtunnel](https://github.com/localtunnel/localtunnel) (Node.js
+is preinstalled in Colab). On the first visit localtunnel asks for a *tunnel
+password*: it's the runtime's public IP, which `run_colab()` prints. Anyone
+with the link and password can use the app while it runs.
 
 ### Try it with sample data
 
@@ -143,6 +163,7 @@ The app recommends: *load → apply one operation → check preview → download
 my_viz_plotly.py          Entry point: page config + sidebar router
 edaviz/
   launcher.py             Local launcher: `edaviz` command and edaviz.show()
+  colab.py                Google Colab: edaviz.run_colab() (installs requirements, opens a localtunnel link)
 views/
   home.py                 Data upload & preprocessing
   missing_data.py         Missing-value overview, drop / impute
@@ -151,7 +172,7 @@ views/
   about.py                In-app manual and examples
 utils/
   data_processing.py      Shared transformations, replay, and atomic undo/history updates
-  plot_utils.py           (placeholder, unused)
+  plot_utils.py           Streamlit-free figure builders (regression, numeric heatmap)
 visualization.py          Legacy copy — NOT used by the app
 time_series.py            Legacy copy (identical to views/time_series.py) — NOT used
 .github/workflows/        Two Azure Web App deploy pipelines

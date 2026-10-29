@@ -9,13 +9,13 @@ def main():
     with st.sidebar:
         selected = option_menu(
             menu_title="EDAViz",
-            options=["Home", "Missing Data Imputation", "Visualization", "Time Series", "About"],
+            options=["Load data", "Missing Data Imputation", "Visualization", "Time Series", "About"],
             icons=["house", "gear", "bar-chart", "clock", "info-circle"],
             menu_icon="cast",
             default_index=0,
         )
     
-    if selected == "Home":
+    if selected == "Load data":
         from views.home import home
         home()
     elif selected == "Missing Data Imputation":
