@@ -166,7 +166,7 @@ tests for direct execution, replay, and source preservation.
 
 ## Deployment
 
-`.github/workflows/` contains two near-identical Azure workflows (only the app
-name and secret differ). Both run on push to `main`: set up Python 3.10, install
-requirements, zip the repo, and deploy with `azure/webapps-deploy@v3`. No tests
-are run. The Streamlit start command is configured in Azure, not in the repo.
+`.github/workflows/validate.yml` runs the validation gates on every push and pull
+request; there are no deploy workflows. `scripts/build_deployment.py` builds the
+allowlisted `dist/release.zip` for hosting (e.g. Azure App Service), where the
+Streamlit start command is configured on the host.

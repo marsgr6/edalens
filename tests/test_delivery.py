@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_every_azure_deployment_requires_the_shared_validation_job():
+    # The edalens repository has no deploy workflows; any added back must be gated.
     workflows = list((ROOT / ".github/workflows").glob("main_*.yml"))
-    assert len(workflows) == 2
     for path in workflows:
         workflow = yaml.safe_load(path.read_text())
         jobs = workflow["jobs"]

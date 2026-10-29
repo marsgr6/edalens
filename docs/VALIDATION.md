@@ -38,8 +38,9 @@ Gates:
    localhost binding, occupied/invalid ports, startup failure and timeout, foreign
    servers on the port, stopping only its own process, optional browser opening,
    the CLI, and one real Streamlit start/stop.
-7. Tests that both Azure deployments depend on validation and that the deployment
-   archive contains only runtime sources plus hashed runtime requirements.
+7. Tests that any Azure deployment workflow (none at present) depends on
+   validation and that the deployment archive contains only runtime sources plus
+   hashed runtime requirements.
 8. Packaging (`scripts/check_package.py`): `validate-pyproject`; sdist build and a
    wheel built from that sdist, using the locked setuptools without build isolation;
    `check-wheel-contents` with `edalens` as the only top-level entry
@@ -105,10 +106,10 @@ vulnerabilities. This setup does not include a vulnerability-audit gate yet.
 
 ## CI and deployment enforcement
 
-`.github/workflows/validate.yml` runs on pull requests and pushes to `main` and is
-reused by both deployment workflows. Failed validation prevents deployment. The
-deploy jobs download the archive built in their own successful validation run;
-they no longer zip the entire checkout independently.
+`.github/workflows/validate.yml` runs on pull requests and pushes to `main` and
+can be reused (`workflow_call`) by a deployment workflow. This repository has no
+deployment workflows; if one is added, it must call validation, need its job and
+deploy the `validated-app` archive it uploads (enforced by `tests/test_delivery.py`).
 
 `scripts/build_deployment.py` includes only `my_viz_plotly.py`, the `edalens/`
 package sources, and runtime requirements under Azure's expected `requirements.txt`

@@ -214,7 +214,7 @@ edalens/                  The pip package
     plot_utils.py         Streamlit-free figure builders (regression, numeric heatmap)
 my_viz_plotly.py          Thin wrapper for `streamlit run` and Azure; runs edalens.app
 notebooks/                Colab and test notebooks
-.github/workflows/        Validation and two Azure Web App deploy pipelines
+.github/workflows/        Validation (tests and package checks on every push and PR)
 requirements.txt
 ```
 
@@ -224,17 +224,11 @@ Architecture details (state flow, session keys, operation log): [docs/ARCHITECTU
 
 ## Deployment
 
-Every push to `main` triggers **two** GitHub Actions workflows, each building the
-app and deploying it to a different Azure App Service:
-
-| Workflow | Azure app |
-|---|---|
-| `main_effective-visualization-streamlit-plotly.yml` | `effective-visualization-streamlit-plotly` |
-| `main_myviz-efective-vizualization-with-streamlit.yml` | `myviz-efective-vizualization-with-streamlit` |
-
-Both use a publish-profile secret (`AZUREAPPSERVICE_PUBLISHPROFILE_*`). The
-Streamlit start command is not in the repo; it must be set in the Azure portal,
-typically:
+This repository does not deploy automatically; pushes only run the Validation
+workflow. To host the app (for example on Azure App Service), build the
+allowlisted archive with `python scripts/build_deployment.py`
+(`dist/release.zip`: `my_viz_plotly.py`, the `edalens` package and hashed
+requirements) and set the start command on the host, typically:
 
 ```bash
 python -m streamlit run my_viz_plotly.py --server.port 8000 --server.address 0.0.0.0
