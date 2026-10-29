@@ -8,8 +8,10 @@ The app runs as a local Streamlit server (see ``edaviz.launcher``) and is shown
 in an iframe. In local Jupyter, JupyterLab and VS Code the iframe points at
 ``127.0.0.1``, which the notebook's browser reaches directly. In Google Colab
 the server runs on Google's VM, so the iframe goes through Colab's own port
-proxy (``google.colab.kernel.proxyPort``) instead; ``edaviz.run_colab()``
-remains the fallback when that proxy does not work.
+proxy via ``google.colab.output.serve_kernel_port_as_iframe``. Access to a
+proxied port is granted only to the output frame that asked for it, so the
+iframe must be created there by Colab's JavaScript, not from our HTML; and a
+"new tab" link cannot work. ``edaviz.run_colab()`` remains the fallback.
 
 The DataFrame is pickled to a private temporary file whose path is passed to
 the app in ``EDAVIZ_DATA``; every browser session of that app starts with it.
@@ -54,13 +56,12 @@ class NotebookApp:
         server: EDAVizServer,
         data_path: Optional[Path],
         height: int,
-        embed_url: Optional[str] = None,
+        colab: bool = False,
     ) -> None:
         self.server = server
         self.data_path = data_path
         self.height = height
-        # What the browser loads: the local URL, or Colab's proxied one.
-        self.embed_url = embed_url or server.url
+        self.colab = colab  # Embed through Colab's port proxy instead of 127.0.0.1.
         _running.add(self)
 
     @property
@@ -72,8 +73,13 @@ class NotebookApp:
     def running(self) -> bool:
         return self.server.running
 
+    @property
+    def path(self) -> str:
+        """The server's random URL prefix, e.g. '/edaviz-3f9c.../'."""
+        return "/" + self.url.split("/", 3)[3]
+
     def iframe_html(self, height: Optional[int] = None) -> str:
-        url = html.escape(self.embed_url, quote=True)
+        url = html.escape(self.url, quote=True)
         return (
             f'<iframe src="{url}" width="100%" height="{height or self.height}" '
             'style="border: 1px solid #ddd; border-radius: 4px;" '
@@ -87,7 +93,19 @@ class NotebookApp:
         """Show the app (again) in the current cell's output."""
         from IPython.display import HTML, display
 
-        display(HTML(self.iframe_html(height)))
+        if not self.colab:
+            display(HTML(self.iframe_html(height)))
+            return
+        from google.colab import output
+
+        output.serve_kernel_port_as_iframe(
+            self.server.port, path=self.path, height=str(height or self.height)
+        )
+        display(HTML(
+            '<div style="font-size: 0.85em;">EDAViz runs inside this frame only. '
+            "If it stays blank or on <i>Connecting…</i>, call <code>.stop()</code> "
+            "and use <code>edaviz.run_colab()</code> for a public link.</div>"
+        ))
 
     def stop(self) -> None:
         """Stop the app and delete the data file; safe to call repeatedly."""
@@ -108,7 +126,8 @@ class NotebookApp:
 
     def __repr__(self) -> str:
         state = "running" if self.running else "stopped"
-        return f"<EDAViz notebook app {self.embed_url} ({state})>"
+        where = "Colab port proxy" if self.colab else self.url
+        return f"<EDAViz notebook app {where} ({state})>"
 
 
 def _write_data(df: pd.DataFrame) -> Path:
@@ -135,14 +154,6 @@ def _in_notebook() -> bool:
 
 def _in_colab() -> bool:
     return "google.colab" in sys.modules
-
-
-def _colab_proxy_url(port: int) -> str:
-    """Public URL of Colab's proxy for ``port`` on this VM, ending in '/'."""
-    from google.colab.output import eval_js
-
-    url = eval_js(f"google.colab.kernel.proxyPort({port}, {{'cache': false}})")
-    return str(url).rstrip("/") + "/"
 
 
 def walk(
@@ -181,23 +192,11 @@ def walk(
         if data_path is not None:
             data_path.unlink()
         raise
-    embed_url = None
-    if colab:
-        try:
-            # The server answers only under its random prefix, so keep it.
-            embed_url = _colab_proxy_url(server.port) + server.url.split("/", 3)[3]
-        except Exception as error:
-            server.stop()
-            if data_path is not None:
-                data_path.unlink()
-            raise LaunchError(
-                f"Colab's port proxy is unavailable ({error}); use edaviz.run_colab() instead."
-            ) from error
-    app = NotebookApp(server, data_path, height, embed_url)
+    app = NotebookApp(server, data_path, height, colab)
     if display and _in_notebook():
         app.display()
     elif display:
-        print(f"EDAViz is running at {app.embed_url} (not in a notebook, so nothing is embedded).")
+        print(f"EDAViz is running at {app.url} (not in a notebook, so nothing is embedded).")
     return app
 
 

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import sys
+import types
 import urllib.request
 
 import pandas as pd
@@ -123,41 +124,37 @@ def test_app_starts_with_the_preloaded_dataframe(tmp_path, monkeypatch):
     assert len(app.dataframe) == 1  # The processed-data preview is shown.
 
 
-def test_walk_in_colab_embeds_through_the_port_proxy(fake_streamlit, monkeypatch):
+def fake_colab(monkeypatch):
+    """Install a stand-in google.colab.output that records iframe requests."""
+    calls = []
+    output = types.ModuleType("google.colab.output")
+    output.serve_kernel_port_as_iframe = lambda port, **kwargs: calls.append((port, kwargs))
+    colab_module = types.ModuleType("google.colab")
+    colab_module.output = output
+    monkeypatch.setitem(sys.modules, "google.colab", colab_module)
+    monkeypatch.setitem(sys.modules, "google.colab.output", output)
+    return calls
+
+
+def test_walk_in_colab_embeds_through_colabs_port_proxy(fake_streamlit, monkeypatch):
+    calls = fake_colab(monkeypatch)
     installs = []
-    monkeypatch.setattr(notebook, "_in_colab", lambda: True)
-    monkeypatch.setattr(notebook, "_colab_proxy_url", lambda port: f"https://{port}-x.prod.colab.dev/")
     monkeypatch.setattr("edaviz.colab.install_requirements", lambda: installs.append(1))
-    with edaviz.walk(pd.DataFrame({"x": [1]}), display=False) as app:
-        prefix = app.url.split("/", 3)[3]
-        assert app.embed_url == f"https://{app.server.port}-x.prod.colab.dev/{prefix}"
-        assert f'<iframe src="{app.embed_url}"' in app.iframe_html()
+    monkeypatch.setattr(notebook, "_in_notebook", lambda: True)
+    with edaviz.walk(pd.DataFrame({"x": [1]}), height=700) as app:
+        assert app.colab
         assert app.server.env["STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION"] == "false"
         assert app.server.env["STREAMLIT_SERVER_ENABLE_CORS"] == "false"
         assert Path(fetch(app.url + "env")) == app.data_path
+        # Colab's helper builds the iframe in the output frame, under the random prefix.
+        assert calls == [(app.server.port, {"path": app.path, "height": "700"})]
+        assert app.url.endswith(app.path) and app.path.startswith("/edaviz-")
+        app.display(height=500)
+        assert calls[-1] == (app.server.port, {"path": app.path, "height": "500"})
     assert installs == [1]
-
-
-def test_colab_proxy_failure_stops_the_server_and_points_to_run_colab(fake_streamlit, monkeypatch):
-    started = []
-    real_start = launcher.EDAVizServer.start
-
-    def tracking_start(self, *args, **kwargs):
-        started.append(self)
-        return real_start(self, *args, **kwargs)
-
-    def no_proxy(port):
-        raise RuntimeError("no frontend")
-
-    monkeypatch.setattr(launcher.EDAVizServer, "start", tracking_start)
-    monkeypatch.setattr(notebook, "_in_colab", lambda: True)
-    monkeypatch.setattr(notebook, "_colab_proxy_url", no_proxy)
-    with pytest.raises(launcher.LaunchError, match="run_colab"):
-        edaviz.walk(pd.DataFrame({"x": [1]}), display=False, install=False)
-    assert started and not started[0].running
 
 
 def test_local_walk_keeps_streamlit_protections(fake_streamlit):
     with edaviz.walk(display=False) as app:
-        assert app.embed_url == app.url
+        assert not app.colab
         assert not any(key.startswith("STREAMLIT_") for key in app.server.env)
