@@ -1,7 +1,7 @@
-"""Run EDAViz entirely in the notebook's browser, with no server or tunnel::
+"""Run EDALens entirely in the notebook's browser, with no server or tunnel::
 
-    import edaviz
-    app = edaviz.walk(df, mode="browser")
+    import edalens
+    app = edalens.walk(df, mode="browser")
 
 Like pygwalker, everything happens in the cell output. The app's own Python
 files and the DataFrame are embedded in the output HTML, and stlite
@@ -27,7 +27,7 @@ from typing import Dict, Optional
 
 import pandas as pd
 
-from edaviz.launcher import app_script
+from edalens.launcher import app_script
 
 # Pinned: stlite's mount API changes between releases.
 STLITE_VERSION = "1.11.0"
@@ -45,28 +45,39 @@ BROWSER_REQUIREMENTS = [
     "statsmodels",
     "streamlit-option-menu",  # Imported, though the app uses a radio menu here.
 ]
-DATA_FILE = "edaviz_data.json"
-ENTRYPOINT = "edaviz_browser_app.py"
-# Same name as utils.data_processing.PRESET_DATA_ENV (see edaviz.notebook).
-ENTRY_SOURCE = f"""import os
+DATA_FILE = "edalens_data.json"
+ENTRYPOINT = "edalens_browser_app.py"
+# Same name as edalens.utils.data_processing.PRESET_DATA_ENV (see edalens.notebook).
+DATA_ENTRY_SOURCE = f"""import os
 
-os.environ["EDAVIZ_DATA"] = {DATA_FILE!r}
+os.environ["EDALENS_DATA"] = {DATA_FILE!r}
 
-import my_viz_plotly
+from edalens.app import main
 
-my_viz_plotly.main()
+main()
+"""
+ENTRY_SOURCE = """from edalens.app import main
+
+main()
 """
 DEFAULT_HEIGHT = 900
 LARGE_OUTPUT_BYTES = 50_000_000
 
 
 def app_files() -> Dict[str, str]:
-    """Source of the routed app, keyed by its path relative to the app root."""
-    root = app_script().parent
-    paths = [root / "my_viz_plotly.py"]
-    for package in ("views", "utils"):
-        paths += sorted((root / package).glob("*.py"))
-    return {path.relative_to(root).as_posix(): path.read_text(encoding="utf-8") for path in paths}
+    """Source of the routed app, keyed by its path in the browser's file system."""
+    package = app_script().parent
+    paths = [package / "app.py"]
+    for subpackage in ("views", "utils"):
+        paths += sorted((package / subpackage).glob("*.py"))
+    files = {
+        path.relative_to(package.parent).as_posix(): path.read_text(encoding="utf-8")
+        for path in paths
+    }
+    # The real edalens/__init__.py imports the launcher and notebook helpers,
+    # which the browser neither needs nor can run.
+    files["edalens/__init__.py"] = ""
+    return files
 
 
 def frame_json(df: pd.DataFrame) -> str:
@@ -86,17 +97,16 @@ def _script_json(value: object) -> str:
 
 
 def page_html(df: Optional[pd.DataFrame]) -> str:
-    """A standalone page that mounts EDAViz with stlite, ``df`` preloaded."""
+    """A standalone page that mounts EDALens with stlite, ``df`` preloaded."""
     files = dict(app_files())
     if df is not None:
         files[DATA_FILE] = frame_json(df)
-        files[ENTRYPOINT] = ENTRY_SOURCE
-        entrypoint = ENTRYPOINT
+        files[ENTRYPOINT] = DATA_ENTRY_SOURCE
     else:
-        entrypoint = "my_viz_plotly.py"
+        files[ENTRYPOINT] = ENTRY_SOURCE
     options = {
         "requirements": BROWSER_REQUIREMENTS,
-        "entrypoint": entrypoint,
+        "entrypoint": ENTRYPOINT,
         "files": files,
         "streamlitConfig": {"client.toolbarMode": "viewer"},
     }
@@ -118,12 +128,14 @@ mount({_script_json(options)}, document.getElementById("root"));
 
 
 class BrowserApp:
-    """EDAViz running in the notebook's browser; there is no server to stop."""
+    """EDALens running in the notebook's browser; there is no server to stop."""
 
-    def __init__(self, df: Optional[pd.DataFrame], height: int = DEFAULT_HEIGHT) -> None:
+    def __init__(
+        self, df: Optional[pd.DataFrame], height: int = DEFAULT_HEIGHT
+    ) -> None:
         self.page = page_html(df)
         self.height = height
-        self._id = f"edaviz-{secrets.token_hex(4)}"
+        self._id = f"edalens-{secrets.token_hex(4)}"
 
     def iframe_html(self, height: Optional[int] = None) -> str:
         # srcdoc keeps stlite's global styles out of the notebook page.
@@ -132,7 +144,7 @@ class BrowserApp:
             f'width="100%" height="{height or self.height}" '
             'style="border: 1px solid #ddd; border-radius: 4px;" '
             'allow="clipboard-write"></iframe>'
-            '<div style="font-size: 0.85em;">EDAViz runs in your browser (stlite); '
+            '<div style="font-size: 0.85em;">EDALens runs in your browser (stlite); '
             "the first start downloads Python packages and takes 20-60 s. "
             "Forecasting with Prophet is not available in this mode.</div>"
         )
@@ -154,7 +166,7 @@ class BrowserApp:
 
     def __repr__(self) -> str:
         size = len(self.page) / 1e6
-        return f"<EDAViz in-browser app ({size:.1f} MB page)>"
+        return f"<EDALens in-browser app ({size:.1f} MB page)>"
 
 
 def walk_browser(

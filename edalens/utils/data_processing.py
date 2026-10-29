@@ -20,8 +20,8 @@ Operation = Mapping[str, Any]
 DATE_FEATURES = ("Year", "Month", "Day", "DayOfWeek", "Hour")
 SAMPLE_SEED = 42
 KNN_NEIGHBORS = 5
-# Set by ``edaviz.walk(df)``: path of a pickled DataFrame to preload in every session.
-PRESET_DATA_ENV = "EDAVIZ_DATA"
+# Set by ``edalens.walk(df)``: path of a pickled DataFrame to preload in every session.
+PRESET_DATA_ENV = "EDALENS_DATA"
 PRESET_DATA_LABEL = "DataFrame from notebook"
 
 

@@ -1,4 +1,4 @@
-"""Start, verify, and stop local EDAViz servers without touching other processes."""
+"""Start, verify, and stop local EDALens servers without touching other processes."""
 
 from pathlib import Path
 import socket
@@ -8,8 +8,8 @@ import urllib.request
 
 import pytest
 
-import edaviz
-from edaviz import launcher
+import edalens
+from edalens import launcher
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -79,14 +79,14 @@ def busy_port():
 
 def test_command_binds_localhost_and_runs_installed_script():
     script = launcher.app_script()
-    assert script == ROOT / "my_viz_plotly.py"
-    command = launcher.streamlit_command(script, 8765, "edaviz-token")
+    assert script == ROOT / "edalens" / "app.py"
+    command = launcher.streamlit_command(script, 8765, "edalens-token")
     assert command[:5] == [sys.executable, "-m", "streamlit", "run", str(script)]
     options = dict(zip(command[5::2], command[6::2]))
     assert options["--server.address"] == "127.0.0.1"
     assert options["--server.port"] == "8765"
     assert options["--server.headless"] == "true"
-    assert options["--server.baseUrlPath"] == "edaviz-token"
+    assert options["--server.baseUrlPath"] == "edalens-token"
 
 
 @pytest.mark.parametrize("address", ["127.0.0.1", "0.0.0.0"])
@@ -97,8 +97,8 @@ def test_explicit_occupied_port_is_rejected_without_starting(
         listener.bind((address, 0))
         listener.listen()
         port = listener.getsockname()[1]
-        with pytest.raises(edaviz.LaunchError, match=f"Port {port}.*in use"):
-            edaviz.show(port=port, open_browser=False)
+        with pytest.raises(edalens.LaunchError, match=f"Port {port}.*in use"):
+            edalens.show(port=port, open_browser=False)
     assert started == []
 
 
@@ -111,7 +111,7 @@ def test_default_port_skips_an_occupied_port(monkeypatch, busy_port):
 
 @pytest.mark.parametrize("port", [0, 65536])
 def test_invalid_port_is_rejected(port):
-    with pytest.raises(edaviz.LaunchError, match="between 1 and 65535"):
+    with pytest.raises(edalens.LaunchError, match="between 1 and 65535"):
         launcher.choose_port(port)
 
 
@@ -121,8 +121,8 @@ def test_startup_failure_reports_exit_code_and_output(monkeypatch, started):
         "streamlit_command",
         lambda *args: [sys.executable, "-c", "print('boom'); raise SystemExit(3)"],
     )
-    with pytest.raises(edaviz.LaunchError, match=r"(?s)exited with code 3.*boom"):
-        edaviz.show(open_browser=False)
+    with pytest.raises(edalens.LaunchError, match=r"(?s)exited with code 3.*boom"):
+        edalens.show(open_browser=False)
     assert [process.returncode for process in started] == [3]
 
 
@@ -132,8 +132,8 @@ def test_startup_timeout_stops_the_child(monkeypatch, started):
         "streamlit_command",
         lambda *args: [sys.executable, "-c", "import time; time.sleep(60)"],
     )
-    with pytest.raises(edaviz.LaunchError, match="not ready within 1"):
-        edaviz.show(open_browser=False, startup_timeout=1)
+    with pytest.raises(edalens.LaunchError, match="not ready within 1"):
+        edalens.show(open_browser=False, startup_timeout=1)
     assert len(started) == 1 and started[0].poll() is not None
 
 
@@ -147,15 +147,15 @@ def test_another_server_on_the_port_is_not_mistaken_for_ours(
         "streamlit_command",
         lambda *args: [sys.executable, "-c", "import time; time.sleep(60)"],
     )
-    with pytest.raises(edaviz.LaunchError):
-        edaviz.show(port=busy_port, open_browser=False, startup_timeout=1)
+    with pytest.raises(edalens.LaunchError):
+        edalens.show(port=busy_port, open_browser=False, startup_timeout=1)
 
 
 def test_stop_affects_only_the_server_it_started(fake_streamlit):
     bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     try:
-        first = edaviz.show(open_browser=False)
-        second = edaviz.show(open_browser=False)
+        first = edalens.show(open_browser=False)
+        second = edalens.show(open_browser=False)
         assert first.port != second.port
         assert fetch(first.url) == fetch(second.url) == 200
 
@@ -174,19 +174,19 @@ def test_stop_affects_only_the_server_it_started(fake_streamlit):
 
 
 def test_stop_is_idempotent_and_context_manager_stops(fake_streamlit):
-    with edaviz.show(open_browser=False) as server:
+    with edalens.show(open_browser=False) as server:
         assert server.running
-        assert server.url.startswith(f"http://127.0.0.1:{server.port}/edaviz-")
+        assert server.url.startswith(f"http://127.0.0.1:{server.port}/edalens-")
     assert not server.running
     server.stop()
-    assert repr(server) == f"<EDAViz server {server.url} (stopped)>"
+    assert repr(server) == f"<EDALens server {server.url} (stopped)>"
 
 
 @pytest.mark.parametrize("open_browser", [False, True])
 def test_browser_opening_is_optional(monkeypatch, fake_streamlit, open_browser):
     opened = []
     monkeypatch.setattr(launcher.webbrowser, "open", opened.append)
-    with edaviz.show(open_browser=open_browser) as server:
+    with edalens.show(open_browser=open_browser) as server:
         assert opened == ([server.url] if open_browser else [])
 
 
@@ -197,10 +197,10 @@ def test_cli_prints_url_and_stops_on_interrupt(
         assert fetch(self.url) == 200
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(launcher.EDAVizServer, "wait", interrupt)
+    monkeypatch.setattr(launcher.EDALensServer, "wait", interrupt)
     assert launcher.main(["--no-browser"]) == 0
     output = capsys.readouterr().out
-    assert "http://127.0.0.1:" in output and "EDAViz stopped." in output
+    assert "http://127.0.0.1:" in output and "EDALens stopped." in output
     assert started[0].poll() is not None
 
 
@@ -210,7 +210,7 @@ def test_cli_reports_launch_failure(capsys, busy_port):
 
 
 def test_real_streamlit_server_starts_serves_and_stops():
-    server = edaviz.show(open_browser=False)
+    server = edalens.show(open_browser=False)
     try:
         assert fetch(server.url) == 200
     finally:

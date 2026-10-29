@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import io
-from utils.data_processing import (
+from edalens.utils.data_processing import (
     OperationError,
     describe_operation,
     run_operation,

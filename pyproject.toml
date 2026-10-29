@@ -1,12 +1,12 @@
 [project]
-name = "edaviz"
+name = "edalens"
 version = "0.1.0"
-description = "Interactive exploratory data analysis with Streamlit and Plotly"
+description = "Interactive exploratory data analysis with Streamlit and Plotly, in the browser or inside notebooks"
 readme = "README.md"
 requires-python = "==3.10.*"
 license = "GPL-3.0-or-later"
 authors = [{ name = "Mario González Rodríguez" }]
-keywords = ["eda", "data-visualization", "streamlit", "plotly", "time-series"]
+keywords = ["eda", "data-visualization", "streamlit", "plotly", "time-series", "jupyter", "notebook"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
@@ -31,24 +31,25 @@ dependencies = [
 ]
 
 [project.scripts]
-edaviz = "edaviz.launcher:main"
+edalens = "edalens.launcher:main"
 
 [project.urls]
-Repository = "https://github.com/marsgr6/my_viz"
+Homepage = "https://github.com/marsgr6/edalens"
+Repository = "https://github.com/marsgr6/edalens"
+Issues = "https://github.com/marsgr6/edalens/issues"
 
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# Flat layout: ship the routed app modules unchanged; legacy root copies stay out.
-# `edaviz` holds only the local launcher; it runs the sibling my_viz_plotly.py.
-py-modules = ["my_viz_plotly"]
-packages = ["views", "utils", "edaviz"]
+# Everything installs under the edalens namespace; the root my_viz_plotly.py
+# (kept for `streamlit run` and Azure) stays out of the wheel.
+packages = ["edalens", "edalens.views", "edalens.utils"]
 
 [tool.ruff]
 target-version = "py310"
-include = ["my_viz_plotly.py", "views/*.py", "utils/*.py", "edaviz/*.py", "scripts/*.py", "tests/*.py"]
+include = ["my_viz_plotly.py", "edalens/**/*.py", "scripts/*.py", "tests/*.py"]
 
 [tool.ruff.lint]
 # Adopt correctness checks without reformatting or rewriting the existing app.

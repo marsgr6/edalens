@@ -7,7 +7,7 @@ from streamlit.testing.v1 import AppTest
 
 def test_home_renders_without_an_exception():
     app = AppTest.from_file(
-        str(Path(__file__).resolve().parents[1] / "my_viz_plotly.py")
+        str(Path(__file__).resolve().parents[1] / "edalens" / "app.py")
     )
     app.run(timeout=30)
     assert not app.exception

@@ -10,7 +10,7 @@ import warnings
 import re
 from scipy.stats import t
 
-from utils.plot_utils import (
+from edalens.utils.plot_utils import (
     FIT_METHODS, HEATMAP_ROW_ORDERS, HEATMAP_SCALINGS, MARGINAL_KINDS,
     numeric_heatmap_figure, regression_figure,
 )

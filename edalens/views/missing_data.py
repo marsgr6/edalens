@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from utils.data_processing import OperationError, run_operation
+from edalens.utils.data_processing import OperationError, run_operation
 
 
 def _missing_info(df):

@@ -12,32 +12,32 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 # Exact top-level entries the wheel may contain (replaces check W009 with W201/W202).
-TOPLEVEL = ("my_viz_plotly.py", "views", "utils", "edaviz")
+TOPLEVEL = ("edalens",)
 MIN_PYROMA_RATING = "8"  # pyroma's default threshold, stated explicitly.
 
 SMOKE_TEST = """
 import importlib.metadata, pathlib, sys, urllib.request
 target, checkout = pathlib.Path(sys.argv[1]).resolve(), pathlib.Path(sys.argv[2])
 sys.path.insert(0, str(target))
-import my_viz_plotly, views.home, utils.data_processing, edaviz
-for module in (my_viz_plotly, views.home, utils.data_processing, edaviz):
+import edalens, edalens.app, edalens.views.home, edalens.utils.data_processing
+for module in (edalens, edalens.app, edalens.views.home, edalens.utils.data_processing):
     path = pathlib.Path(module.__file__).resolve()
     assert target in path.parents and checkout not in path.parents, path
-assert importlib.metadata.version("edaviz")
+assert importlib.metadata.version("edalens")
 from streamlit.testing.v1 import AppTest
-app = AppTest.from_file(my_viz_plotly.__file__)
+app = AppTest.from_file(edalens.app.__file__)
 app.run(timeout=60)
 assert not app.exception, app.exception
-(script,) = importlib.metadata.entry_points(group="console_scripts", name="edaviz")
-assert script.value == "edaviz.launcher:main", script
-assert edaviz.launcher.app_script() == pathlib.Path(my_viz_plotly.__file__).resolve()
-server = edaviz.show(open_browser=False)
+(script,) = importlib.metadata.entry_points(group="console_scripts", name="edalens")
+assert script.value == "edalens.launcher:main", script
+assert edalens.launcher.app_script() == pathlib.Path(edalens.app.__file__).resolve()
+server = edalens.show(open_browser=False)
 try:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     assert opener.open(server.url, timeout=10).status == 200
 finally:
     server.stop()
-assert not server.running and edaviz.launcher.port_is_free(server.port)
+assert not server.running and edalens.launcher.port_is_free(server.port)
 print("Installed wheel imports, renders Home, and launches/stops outside the checkout.")
 """
 

@@ -1,6 +1,6 @@
 # Feature Guide
 
-A page-by-page guide to what EDAViz can do. The in-app **About** page has the
+A page-by-page guide to what EDALens can do. The in-app **About** page has the
 same manual with screenshots.
 
 ## 1. Home — load and prepare data

@@ -41,10 +41,9 @@ def test_deployment_archive_is_allowlisted_and_repeatable(tmp_path):
     build(second)
     assert first.read_bytes() == second.read_bytes()
     expected = {"my_viz_plotly.py", "requirements.txt"}
-    for directory in ("views", "utils"):
-        expected.update(
-            p.relative_to(ROOT).as_posix() for p in (ROOT / directory).glob("*.py")
-        )
+    expected.update(
+        p.relative_to(ROOT).as_posix() for p in (ROOT / "edalens").rglob("*.py")
+    )
     with zipfile.ZipFile(first) as archive:
         assert set(archive.namelist()) == expected
         assert archive.read("requirements.txt").decode() == (

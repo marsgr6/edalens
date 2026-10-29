@@ -7,9 +7,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def build(destination: Path) -> None:
-    files = [ROOT / "my_viz_plotly.py"]
-    for directory in ("views", "utils"):
-        files.extend(sorted((ROOT / directory).glob("*.py")))
+    # my_viz_plotly.py imports edalens.app, so the whole package ships.
+    files = [ROOT / "my_viz_plotly.py", *sorted((ROOT / "edalens").rglob("*.py"))]
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for source in files:

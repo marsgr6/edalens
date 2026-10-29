@@ -1,10 +1,10 @@
-"""Run EDAViz in Google Colab (or any machine with Node.js) behind a public tunnel.
+"""Run EDALens in Google Colab (or any machine with Node.js) behind a public tunnel.
 
 Colab cannot open ``127.0.0.1`` in your browser, so the app is exposed with
 localtunnel (``npx localtunnel``)::
 
-    import edaviz
-    app = edaviz.run_colab()   # installs requirements once, prints link + password
+    import edalens
+    app = edalens.run_colab()   # installs requirements once, prints link + password
     app.stop()                 # closes the tunnel and stops the app
 
 localtunnel shows a reminder page on first visit that asks for a "tunnel
@@ -28,11 +28,11 @@ import weakref
 from pathlib import Path
 from typing import List, Optional
 
-from edaviz.launcher import (
+from edalens.launcher import (
     STARTUP_TIMEOUT,
     STOP_TIMEOUT,
     HOST,
-    EDAVizServer,
+    EDALensServer,
     LaunchError,
     choose_port,
 )
@@ -40,7 +40,7 @@ from edaviz.launcher import (
 TUNNEL_TIMEOUT = 90.0  # First use downloads localtunnel through npx.
 PASSWORD_URL = "https://loca.lt/mytunnelpassword"
 _URL_PATTERN = re.compile(r"your url is: (https://\S+)", re.IGNORECASE)
-_INSTALL_MARKER = Path("/tmp/edaviz-requirements-installed")
+_INSTALL_MARKER = Path("/tmp/edalens-requirements-installed")
 
 _running: "weakref.WeakSet[ColabApp]" = weakref.WeakSet()
 
@@ -60,7 +60,7 @@ def install_requirements(force: bool = False, marker: Path = _INSTALL_MARKER) ->
     requirements = requirements_file()
     if requirements is None or (marker.exists() and not force):
         return False
-    print("Installing EDAViz requirements (first run only, 1-3 minutes)...", flush=True)
+    print("Installing EDALens requirements (first run only, 1-3 minutes)...", flush=True)
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", "-q", "-r", str(requirements)],
         capture_output=True,
@@ -93,9 +93,9 @@ def tunnel_password(url: str = PASSWORD_URL, timeout: float = 10.0) -> Optional[
 
 
 class ColabApp:
-    """An EDAViz server plus the localtunnel process that exposes it."""
+    """An EDALens server plus the localtunnel process that exposes it."""
 
-    def __init__(self, server: EDAVizServer, tunnel: subprocess.Popen, public_root: str, password: Optional[str]):
+    def __init__(self, server: EDALensServer, tunnel: subprocess.Popen, public_root: str, password: Optional[str]):
         self.server = server
         self.tunnel = tunnel
         self.password = password
@@ -128,12 +128,12 @@ class ColabApp:
         return "running" if self.running else "stopped"
 
     def __repr__(self) -> str:
-        return f"<EDAViz {self.url} password={self.password} ({self._status()})>"
+        return f"<EDALens {self.url} password={self.password} ({self._status()})>"
 
     def _repr_html_(self) -> str:
         password = self.password or "the public IP of this runtime"
         return (
-            f'<p><b>EDAViz</b> ({self._status()}): <a href="{self.url}" target="_blank">{self.url}</a></p>'
+            f'<p><b>EDALens</b> ({self._status()}): <a href="{self.url}" target="_blank">{self.url}</a></p>'
             f"<p>If a localtunnel page asks for a <b>Tunnel Password</b>, enter "
             f"<code>{password}</code> and click Submit.</p>"
         )
@@ -183,7 +183,7 @@ def run_colab(
     startup_timeout: float = STARTUP_TIMEOUT,
     tunnel_timeout: float = TUNNEL_TIMEOUT,
 ) -> ColabApp:
-    """Install requirements (once), start EDAViz, and expose it through localtunnel.
+    """Install requirements (once), start EDALens, and expose it through localtunnel.
 
     Returns once the app answers locally and the tunnel has a public URL. The
     returned object shows the link and tunnel password when displayed in a
@@ -191,8 +191,8 @@ def run_colab(
     """
     if install:
         install_requirements()
-    print("Starting EDAViz...", flush=True)
-    server = EDAVizServer(choose_port(port)).start(startup_timeout)
+    print("Starting EDALens...", flush=True)
+    server = EDALensServer(choose_port(port)).start(startup_timeout)
     print("Opening the public tunnel...", flush=True)
     try:
         tunnel, public_root = _open_tunnel(server.port, tunnel_timeout)

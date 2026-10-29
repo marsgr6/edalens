@@ -1,6 +1,6 @@
 # Development validation gates
 
-Application source and structure are unchanged. `pyproject.toml` declares the `edaviz`
+Application source and structure are unchanged. `pyproject.toml` declares the `edalens`
 distribution (flat layout, setuptools) and configures tools; there is no PyPI release
 workflow, and the gates below never upload anything.
 
@@ -42,11 +42,11 @@ Gates:
    archive contains only runtime sources plus hashed runtime requirements.
 8. Packaging (`scripts/check_package.py`): `validate-pyproject`; sdist build and a
    wheel built from that sdist, using the locked setuptools without build isolation;
-   `check-wheel-contents` with the exact top-level entries `my_viz_plotly.py`,
-   `views`, `utils`, and `edaviz` (W201/W202 replace W009) and source-tree comparison
+   `check-wheel-contents` with `edalens` as the only top-level entry
+   (W201/W202 replace W009) and source-tree comparison
    (W101/W102); `twine check --strict` on both artifacts; `pyroma --min 8` on the
    sdist; and installation of the wheel into a temporary target that is imported and
-   rendered with Streamlit's `AppTest` from outside the checkout, whose `edaviz`
+   rendered with Streamlit's `AppTest` from outside the checkout, whose `edalens`
    console-script entry point is declared and whose launcher starts the installed
    app, serves it, and stops it. Tests also keep
    `[project.dependencies]` equal to `requirements-runtime.in` and prove the gate
@@ -106,8 +106,8 @@ reused by both deployment workflows. Failed validation prevents deployment. The
 deploy jobs download the archive built in their own successful validation run;
 they no longer zip the entire checkout independently.
 
-`scripts/build_deployment.py` includes only `my_viz_plotly.py`, `views/*.py`,
-`utils/*.py`, and runtime requirements under Azure's expected `requirements.txt`
+`scripts/build_deployment.py` includes only `my_viz_plotly.py`, the `edalens/`
+package sources, and runtime requirements under Azure's expected `requirements.txt`
 name. No environment, development tools, legacy root copies, or secrets are added.
 Archive ordering and timestamps are fixed. Extend this allowlist explicitly if
 the application later gains local runtime assets. The Azure startup configuration
@@ -132,8 +132,8 @@ The CI package gate installs the wheel with `--no-deps` into the validation
 environment, so it does not prove resolution in an empty environment. Verify that
 manually before any release: create a fresh Python 3.10 venv outside the checkout,
 install `requirements-runtime.lock` with `--require-hashes`, install the wheel (and
-separately the sdist) with `--no-deps`, then run `pip check`, the `edaviz` command
-(stop it with Ctrl+C), and `edaviz.show()` / `.stop()` from Python.
+separately the sdist) with `--no-deps`, then run `pip check`, the `edalens` command
+(stop it with Ctrl+C), and `edalens.show()` / `.stop()` from Python.
 The wheel uses the generic top-level names `views` and `utils`; a `src/` layout
-with a single `edaviz` import package would avoid collisions but is not done.
+with a single `edalens` import package would avoid collisions but is not done.
 pyroma currently scores 8/10 (no author email by decision), exactly the threshold.

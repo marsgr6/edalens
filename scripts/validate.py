@@ -17,7 +17,7 @@ def main() -> None:
     if sys.version_info[:2] != (3, 10):
         raise SystemExit("Validation requires Python 3.10, matching deployment.")
     sources = [ROOT / "my_viz_plotly.py"]
-    for directory in ("views", "utils", "edaviz", "scripts", "tests"):
+    for directory in ("edalens", "edalens/views", "edalens/utils", "scripts", "tests"):
         sources.extend(sorted((ROOT / directory).glob("*.py")))
     for source in sources:
         ast.parse(
@@ -29,7 +29,23 @@ def main() -> None:
     run(sys.executable, "scripts/check_environment.py")
     run(sys.executable, "scripts/lock_dependencies.py", "--check")
     run(sys.executable, "scripts/check_lint.py")
-    run(sys.executable, "-m", "ruff", "format", "--check", "edaviz", "scripts", "tests")
+    # The app modules keep their original formatting; only the helpers are checked.
+    run(
+        sys.executable,
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "edalens",
+        "scripts",
+        "tests",
+        "--exclude",
+        "edalens/app.py",
+        "--exclude",
+        "edalens/views",
+        "--exclude",
+        "edalens/utils",
+    )
     run(sys.executable, "-m", "pytest")
     run(sys.executable, "scripts/check_package.py")
     print("All configured validation gates passed.")

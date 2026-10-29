@@ -8,7 +8,7 @@ from streamlit.testing.v1 import AppTest
 
 
 def visualization_page():
-    from views.visualization import visualization
+    from edalens.views.visualization import visualization
 
     visualization()
 

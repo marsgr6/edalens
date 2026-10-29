@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal, assert_series_equal
 
-from utils.data_processing import (
+from edalens.utils.data_processing import (
     OperationError,
     apply_operation,
     apply_operations,

@@ -7,19 +7,19 @@ from streamlit.testing.v1 import AppTest
 
 
 def home_page():
-    from views.home import home
+    from edalens.views.home import home
 
     home()
 
 
 def missing_data_page():
-    from views.missing_data import missing_data_imputation
+    from edalens.views.missing_data import missing_data_imputation
 
     missing_data_imputation()
 
 
 def visualization_page():
-    from views.visualization import visualization
+    from edalens.views.visualization import visualization
 
     visualization()
 

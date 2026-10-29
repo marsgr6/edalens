@@ -3,7 +3,7 @@
 import pandas as pd
 from pandas.testing import assert_frame_equal
 
-from utils.data_processing import apply_operations
+from edalens.utils.data_processing import apply_operations
 
 
 def test_replay_matches_expected_values_and_does_not_mutate_source():

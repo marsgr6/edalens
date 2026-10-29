@@ -6,12 +6,12 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 try:
     from prophet import Prophet
-except ImportError:  # In-browser mode (edaviz.walk(mode="browser")): prophet cannot run in WebAssembly.
+except ImportError:  # In-browser mode (edalens.walk(mode="browser")): prophet cannot run in WebAssembly.
     class Prophet:
         def __init__(self, *args, **kwargs):
             raise ImportError(
-                "Prophet is not available when EDAViz runs inside the browser; "
-                "use edaviz.walk(df) or edaviz.show() for forecasting."
+                "Prophet is not available when EDALens runs inside the browser; "
+                "use edalens.walk(df) or edalens.show() for forecasting."
             )
 from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.seasonal import seasonal_decompose

@@ -6,9 +6,9 @@ import urllib.request
 
 import pytest
 
-import edaviz
-from edaviz import colab
-from edaviz.launcher import LaunchError
+import edalens
+from edalens import colab
+from edalens.launcher import LaunchError
 
 
 def fake_tunnel(script: str):
@@ -33,10 +33,10 @@ def test_run_colab_exposes_the_prefixed_app_and_stop_closes_everything(monkeypat
     monkeypatch.setattr(colab, "tunnel_command", fake_tunnel(ANNOUNCE))
     monkeypatch.setattr(colab, "tunnel_password", lambda: "203.0.113.7")
 
-    app = edaviz.run_colab(install=False)
+    app = edalens.run_colab(install=False)
     try:
         prefix = app.server.url.split("/", 3)[3]
-        assert prefix.startswith("edaviz-")
+        assert prefix.startswith("edalens-")
         assert app.url == f"https://fake-name.loca.lt/{prefix}"
         assert app.running and local_ok(app.server.url)
         html = app._repr_html_()
@@ -52,13 +52,13 @@ def test_run_colab_exposes_the_prefixed_app_and_stop_closes_everything(monkeypat
 def test_tunnel_without_a_url_fails_and_stops_the_app(monkeypatch):
     monkeypatch.setattr(colab, "tunnel_command", fake_tunnel("print('connection refused')"))
     started = []
-    real_start = colab.EDAVizServer.start
+    real_start = colab.EDALensServer.start
 
     def tracking_start(self, *args, **kwargs):
         started.append(self)
         return real_start(self, *args, **kwargs)
 
-    monkeypatch.setattr(colab.EDAVizServer, "start", tracking_start)
+    monkeypatch.setattr(colab.EDALensServer, "start", tracking_start)
     with pytest.raises(LaunchError, match="connection refused"):
         colab.run_colab(install=False, tunnel_timeout=10)
     assert started and not started[0].running

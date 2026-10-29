@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from utils.plot_utils import (
+from edalens.utils.plot_utils import (
     MARGINAL_KINDS,
     lowess_fit,
     numeric_heatmap_figure,
@@ -157,7 +157,7 @@ def test_missing_values_are_dropped_pairwise():
 
 
 def regression_page():
-    from views.visualization import visualization
+    from edalens.views.visualization import visualization
 
     visualization()
 

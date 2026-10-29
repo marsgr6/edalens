@@ -1,6 +1,6 @@
 # Architecture
 
-EDAViz is a single-process Streamlit app. There is no backend, database or API:
+EDALens is a single-process Streamlit app. There is no backend, database or API:
 all data lives in the user's Streamlit session (`st.session_state`) and is lost
 when the browser session ends.
 
@@ -9,18 +9,18 @@ when the browser session ends.
 Streamlit re-runs the whole script on every widget interaction:
 
 ```
-streamlit run my_viz_plotly.py
+streamlit run edalens/app.py      (or the root my_viz_plotly.py wrapper)
         │
         ▼
-my_viz_plotly.main()
-  ├─ st.set_page_config(layout="wide", page_title="EDAViz App")
+edalens.app.main()
+  ├─ st.set_page_config(layout="wide", page_title="EDALens App")
   ├─ sidebar option_menu: Home | Missing Data Imputation | Visualization | Time Series | About
   └─ lazy-import and call the selected view:
-        views.home.home()
-        views.missing_data.missing_data_imputation()
-        views.visualization.visualization()
-        views.time_series.time_series_analysis()
-        views.about.about()
+        edalens.views.home.home()
+        edalens.views.missing_data.missing_data_imputation()
+        edalens.views.visualization.visualization()
+        edalens.views.time_series.time_series_analysis()
+        edalens.views.about.about()
 ```
 
 Views are imported lazily inside the `if/elif` so that heavy libraries (Prophet,
@@ -28,10 +28,10 @@ statsmodels) are only loaded when the Time Series page is opened.
 
 ## Local launcher
 
-`edaviz/launcher.py` (the `edaviz` console script, `python -m edaviz`, and
-`edaviz.show()`) does not import the app. It starts `sys.executable -m streamlit
-run <installed my_viz_plotly.py>` as a child process bound to `127.0.0.1`, with
-headless mode and a random `server.baseUrlPath` (`edaviz-<token>`) passed on the
+`edalens/launcher.py` (the `edalens` console script, `python -m edalens`, and
+`edalens.show()`) does not import the app. It starts `sys.executable -m streamlit
+run <installed edalens/app.py>` as a child process bound to `127.0.0.1`, with
+headless mode and a random `server.baseUrlPath` (`edalens-<token>`) passed on the
 command line, so config files cannot widen the bind address. The child runs with the app's
 install directory as its working directory, so modules in the caller's directory
 are not imported, and logs to a temporary file.
@@ -50,16 +50,15 @@ are not imported, and logs to a temporary file.
 
 | File | Lines | Responsibility |
 |---|---:|---|
-| `my_viz_plotly.py` | 32 | Entry point and router |
-| `edaviz/launcher.py` | 325 | Local launcher (CLI and `edaviz.show()`); not imported by the app |
-| `views/home.py` | 257 | Load CSV (upload or GitHub URL), preprocessing operations, undo, preview, download |
-| `views/missing_data.py` | 78 | Missing-value table, drop rows, KNN/mode imputation |
-| `views/visualization.py` | 1597 | All general plots in one `visualization()` function with nested helpers |
-| `views/time_series.py` | 1219 | Time series loader and ten analysis sections in one function |
-| `views/about.py` | 256 | Static manual / marketing text |
-| `utils/data_processing.py` | 316 | Single implementation of every operation (`apply_operation`), replay (`apply_operations`), and atomic session updates (`run_operation`, `undo_last_operation`, `set_working_df`) |
-| `utils/plot_utils.py` | 379 | Streamlit-free figure builders: `regression_figure` (polynomial/LOWESS fits, marginal rug/histogram/box/violin) and `numeric_heatmap_figure` (per-column scaling, sorting/clustering), unit-tested in `tests/test_plot_utils.py` |
-| `visualization.py`, `time_series.py` (root) | 2630 / 1219 | Legacy copies, not imported anywhere |
+| `edalens/app.py` | 40 | Entry point and router (the root `my_viz_plotly.py` only calls it) |
+| `edalens/launcher.py` | 325 | Local launcher (CLI and `edalens.show()`); not imported by the app |
+| `edalens/views/home.py` | 257 | Load CSV (upload or GitHub URL), preprocessing operations, undo, preview, download |
+| `edalens/views/missing_data.py` | 78 | Missing-value table, drop rows, KNN/mode imputation |
+| `edalens/views/visualization.py` | 1597 | All general plots in one `visualization()` function with nested helpers |
+| `edalens/views/time_series.py` | 1219 | Time series loader and ten analysis sections in one function |
+| `edalens/views/about.py` | 256 | Static manual / marketing text |
+| `edalens/utils/data_processing.py` | 316 | Single implementation of every operation (`apply_operation`), replay (`apply_operations`), and atomic session updates (`run_operation`, `undo_last_operation`, `set_working_df`) |
+| `edalens/utils/plot_utils.py` | 379 | Streamlit-free figure builders: `regression_figure` (polynomial/LOWESS fits, marginal rug/histogram/box/violin) and `numeric_heatmap_figure` (per-column scaling, sorting/clustering), unit-tested in `tests/test_plot_utils.py` |
 
 ## Session state
 
@@ -133,7 +132,7 @@ left unchanged, and the page warns that they still contain missing values.
 Column order, index, and the dtypes of unchanged columns are preserved. Empty
 frames pass through unchanged.
 
-Add new operation types only to `_HANDLERS` in `utils/data_processing.py`, with
+Add new operation types only to `_HANDLERS` in `edalens/utils/data_processing.py`, with
 tests for direct execution, replay, and source preservation.
 
 ## Visualization page internals

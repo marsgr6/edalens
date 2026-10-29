@@ -1,7 +1,6 @@
-"""Start and stop a local EDAViz Streamlit server from Python or the terminal.
+"""Start and stop a local EDALens Streamlit server from Python or the terminal.
 
-The server binds to 127.0.0.1 only and runs the ``my_viz_plotly.py`` installed
-next to this package. Each server gets a random URL prefix, so readiness checks
+The server binds to 127.0.0.1 only and runs the package's ``app.py``. Each server gets a random URL prefix, so readiness checks
 cannot be answered by another process that already uses the port.
 """
 
@@ -30,18 +29,18 @@ STARTUP_TIMEOUT = 60.0
 STOP_TIMEOUT = 10.0
 LOG_TAIL_LINES = 20
 
-_running: "weakref.WeakSet[EDAVizServer]" = weakref.WeakSet()
+_running: "weakref.WeakSet[EDALensServer]" = weakref.WeakSet()
 
 
 class LaunchError(RuntimeError):
-    """The EDAViz server could not be started or did not become ready."""
+    """The EDALens server could not be started or did not become ready."""
 
 
 def app_script() -> Path:
-    """Return the routed app script installed alongside the ``edaviz`` package."""
-    script = Path(__file__).resolve().parent.parent / "my_viz_plotly.py"
+    """Return the routed app script inside the ``edalens`` package."""
+    script = Path(__file__).resolve().parent / "app.py"
     if not script.is_file():
-        raise LaunchError(f"EDAViz app not found at {script}; reinstall edaviz.")
+        raise LaunchError(f"EDALens app not found at {script}; reinstall edalens.")
     return script
 
 
@@ -112,13 +111,13 @@ def _is_healthy(url: str) -> bool:
         return False
 
 
-class EDAVizServer:
-    """Handle for one local EDAViz server process started by this launcher."""
+class EDALensServer:
+    """Handle for one local EDALens server process started by this launcher."""
 
     def __init__(self, port: int, env: Optional[Dict[str, str]] = None) -> None:
         self.port = port
         self.env = dict(env or {})  # Extra environment variables for the app process.
-        self.url = f"http://{HOST}:{port}/edaviz-{secrets.token_hex(8)}/"
+        self.url = f"http://{HOST}:{port}/edalens-{secrets.token_hex(8)}/"
         self.log_path: Optional[Path] = None
         self._process: Optional[subprocess.Popen] = None
 
@@ -126,13 +125,13 @@ class EDAVizServer:
     def running(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
-    def start(self, startup_timeout: float = STARTUP_TIMEOUT) -> "EDAVizServer":
+    def start(self, startup_timeout: float = STARTUP_TIMEOUT) -> "EDALensServer":
         """Start the server and return once it answers its health check."""
         if self._process is not None:
             raise LaunchError("This server was already started; call show() again.")
         base = self.url.rstrip("/").rsplit("/", 1)[1]
         script = app_script()
-        log_fd, log_name = tempfile.mkstemp(prefix="edaviz-", suffix=".log")
+        log_fd, log_name = tempfile.mkstemp(prefix="edalens-", suffix=".log")
         self.log_path = Path(log_name)
         if os.name == "nt":
             # Own process group: Ctrl+C in the caller's console does not reach it,
@@ -149,7 +148,19 @@ class EDAVizServer:
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                env={**os.environ, "PYTHONUNBUFFERED": "1", **self.env},
+                env={
+                    **os.environ,
+                    "PYTHONUNBUFFERED": "1",
+                    # Streamlit puts the script's own folder (edalens/) on sys.path;
+                    # its parent is needed to import edalens from a checkout.
+                    "PYTHONPATH": os.pathsep.join(
+                        filter(
+                            None,
+                            [str(script.parent.parent), os.environ.get("PYTHONPATH")],
+                        )
+                    ),
+                    **self.env,
+                },
                 **options,
             )
         _running.add(self)
@@ -157,10 +168,10 @@ class EDAVizServer:
         while not _is_healthy(self.url):
             code = self._process.poll()
             if code is not None:
-                self._fail(f"EDAViz exited with code {code} during startup.")
+                self._fail(f"EDALens exited with code {code} during startup.")
             if time.monotonic() >= deadline:
                 self._terminate()
-                self._fail(f"EDAViz was not ready within {startup_timeout:g} s.")
+                self._fail(f"EDALens was not ready within {startup_timeout:g} s.")
             time.sleep(0.2)
         return self
 
@@ -217,7 +228,7 @@ class EDAVizServer:
             except OSError:
                 pass
 
-    def __enter__(self) -> "EDAVizServer":
+    def __enter__(self) -> "EDALensServer":
         return self
 
     def __exit__(self, *exc_info: object) -> None:
@@ -225,11 +236,11 @@ class EDAVizServer:
 
     def __repr__(self) -> str:
         state = "running" if self.running else "stopped"
-        return f"<EDAViz server {self.url} ({state})>"
+        return f"<EDALens server {self.url} ({state})>"
 
     def _repr_html_(self) -> str:
         state = "running" if self.running else "stopped"
-        return f'EDAViz server <a href="{self.url}" target="_blank">{self.url}</a> ({state})'
+        return f'EDALens server <a href="{self.url}" target="_blank">{self.url}</a> ({state})'
 
 
 def show(
@@ -237,13 +248,13 @@ def show(
     port: Optional[int] = None,
     open_browser: bool = True,
     startup_timeout: float = STARTUP_TIMEOUT,
-) -> EDAVizServer:
-    """Start EDAViz on localhost without blocking and return its server handle.
+) -> EDALensServer:
+    """Start EDALens on localhost without blocking and return its server handle.
 
     ``port=None`` uses the first free port from 8501. Call ``.stop()`` on the
     returned handle, or use it as a context manager, to shut the server down.
     """
-    server = EDAVizServer(choose_port(port)).start(startup_timeout)
+    server = EDALensServer(choose_port(port)).start(startup_timeout)
     if open_browser:
         webbrowser.open(server.url)
     return server
@@ -260,10 +271,10 @@ def _interrupt(signum: int, frame: object) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    from edaviz import __version__
+    from edalens import __version__
 
     parser = argparse.ArgumentParser(
-        prog="edaviz", description=f"Run EDAViz locally on {HOST}."
+        prog="edalens", description=f"Run EDALens locally on {HOST}."
     )
     parser.add_argument(
         "--port",
@@ -302,7 +313,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
-    print("Starting EDAViz...", flush=True)
+    print("Starting EDALens...", flush=True)
     try:
         server = show(
             port=args.port,
@@ -310,17 +321,17 @@ def _run(args: argparse.Namespace) -> int:
             startup_timeout=args.timeout,
         )
     except LaunchError as error:
-        print(f"edaviz: {error}", file=sys.stderr)
+        print(f"edalens: {error}", file=sys.stderr)
         return 1
-    print(f"EDAViz is running at {server.url}\nPress Ctrl+C to stop.", flush=True)
+    print(f"EDALens is running at {server.url}\nPress Ctrl+C to stop.", flush=True)
     try:
         code = server.wait()
     except KeyboardInterrupt:
         server.stop()
-        print("EDAViz stopped.")
+        print("EDALens stopped.")
         return 0
     print(
-        f"edaviz: server exited with code {code}; log: {server.log_path}",
+        f"edalens: server exited with code {code}; log: {server.log_path}",
         file=sys.stderr,
     )
     return 1
