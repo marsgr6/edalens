@@ -44,8 +44,9 @@ See [docs/FEATURES.md](docs/FEATURES.md) for a full walkthrough.
 
 ## Quick start
 
-Requirements: **Python 3.10** (the version used by CI). Prophet and scikit-learn
-are fairly heavy; a virtual environment is strongly recommended.
+Requirements: **Python 3.10 or newer** (tested on 3.10, 3.12 and 3.13; the
+pinned lock files and CI use 3.10). Prophet and scikit-learn are fairly heavy;
+a virtual environment is strongly recommended.
 
 ```bash
 git clone https://github.com/marsgr6/edalens.git

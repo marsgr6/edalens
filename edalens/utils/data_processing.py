@@ -159,7 +159,7 @@ def _date_features(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
         "Year": parsed.dt.year,
         "Month": parsed.dt.month,
         "Day": parsed.dt.day,
-        "DayOfWeek": parsed.dt.dayofweek,
+        "DayOfWeek": parsed.dt.day_of_week,
         "Hour": parsed.dt.hour,
     }
     for name in DATE_FEATURES:

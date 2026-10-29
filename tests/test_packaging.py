@@ -24,10 +24,16 @@ def read_requirements(path: Path) -> set[str]:
     return requirements
 
 
-def test_package_dependencies_match_runtime_inputs():
+def test_package_dependencies_are_unpinned_and_locked_for_deployment():
+    # The library declares names only, so pip can fit it next to other packages;
+    # every one of them is pinned with hashes for CI/Azure via the runtime inputs.
     project = tomli.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    declared = {str(Requirement(d)) for d in project["project"]["dependencies"]}
-    assert declared == read_requirements(ROOT / "requirements-runtime.in")
+    declared = [Requirement(d) for d in project["project"]["dependencies"]]
+    assert all(not r.specifier and not r.marker for r in declared), declared
+    runtime = {
+        Requirement(r).name for r in read_requirements(ROOT / "requirements-runtime.in")
+    }
+    assert {r.name for r in declared} <= runtime
 
 
 def test_invalid_metadata_stops_the_package_gate(tmp_path):

@@ -86,6 +86,10 @@ For an intentional dependency refresh, use `--upgrade`. Then review both lock
 diffs, reinstall with `--require-hashes`, and run validation. `--check` never
 changes the committed locks. The universal locks contain platform/Python markers,
 but only Python 3.10 is currently validated; they do not claim broader support.
+The published package (`pip install edalens`) declares unpinned dependencies and
+`requires-python >= 3.10`; before a release, also run the test suite in fresh
+Python 3.12 and 3.13 venvs where pip resolves the newest versions (pandas 3,
+numpy 2), since those are what Colab and new users get.
 
 For application-only installation use:
 

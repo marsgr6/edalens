@@ -261,7 +261,7 @@ def time_series_analysis():
                 st.warning(f"Decomposition failed: {e}")
         else:
             df_prophet = df[[selected_col]].reset_index().rename(columns={df.index.name or 'date': 'ds', selected_col: 'y'})
-            df_prophet['y'] = df_prophet['y'].fillna(method='ffill')
+            df_prophet['y'] = df_prophet['y'].ffill()
             try:
                 model = Prophet(yearly_seasonality=True, weekly_seasonality=True, daily_seasonality=True)
                 model.fit(df_prophet)
@@ -424,7 +424,7 @@ def time_series_analysis():
             # Hourly view — month grid like your screenshot
             hourly_df = df[[selected_col]].resample('H').agg(agg_method).reset_index()
             hourly_df.columns = ['datetime', selected_col]
-            hourly_df[selected_col] = hourly_df[selected_col].fillna(method='ffill').fillna(0)
+            hourly_df[selected_col] = hourly_df[selected_col].ffill().fillna(0)
 
             fig = hourly_calheatmap(
                 data=hourly_df,
@@ -568,7 +568,7 @@ def time_series_analysis():
                     if time_granularity != "None":
                         df_prophet = df_prophet.set_index('ds').resample(resample_map[time_granularity]).agg({'y': aggregation_method.lower()}).reset_index()
                     df_prophet = df_prophet[['ds', 'y']].copy()
-                    df_prophet['y'] = df_prophet['y'].fillna(method='ffill')
+                    df_prophet['y'] = df_prophet['y'].ffill()
 
                     model = Prophet(yearly_seasonality=True, weekly_seasonality=True, daily_seasonality=True)
                     model.fit(df_prophet)
@@ -616,7 +616,7 @@ def time_series_analysis():
             if time_granularity != "None":
                 df_prophet = df_prophet.set_index('ds').resample(resample_map[time_granularity]).agg({'y': aggregation_method.lower()}).reset_index()
             df_prophet = df_prophet[['ds', 'y']].copy()
-            df_prophet['y'] = df_prophet['y'].fillna(method='ffill')
+            df_prophet['y'] = df_prophet['y'].ffill()
 
             model = Prophet(yearly_seasonality=True, weekly_seasonality=True, daily_seasonality=True)
             model.fit(df_prophet)

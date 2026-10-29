@@ -3,7 +3,7 @@ name = "edalens"
 version = "0.1.0"
 description = "Interactive exploratory data analysis with Streamlit and Plotly, in the browser or inside notebooks"
 readme = "README.md"
-requires-python = "==3.10.*"
+requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
 authors = [{ name = "Mario González Rodríguez" }]
 keywords = ["eda", "data-visualization", "streamlit", "plotly", "time-series", "jupyter", "notebook"]
@@ -12,15 +12,24 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: Jupyter",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
+    "Topic :: Scientific/Engineering :: Visualization",
 ]
+# What the library imports, unpinned so it installs next to other packages
+# (Colab, conda, ...). The exact, hashed pins for CI and Azure live in
+# requirements-runtime.lock; plotly-calplot stays there only (unused, numpy<2).
 dependencies = [
     "matplotlib",
     "missingno",
-    "numpy==1.26.4",
+    "numpy",
     "pandas",
     "plotly",
     "plotly-calheatmap",
-    "plotly-calplot",
     "prophet",
     "requests",
     "scikit-learn",

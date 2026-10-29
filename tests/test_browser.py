@@ -49,6 +49,8 @@ def test_frame_json_round_trips_dtypes(tmp_path, sample):
         state, {data_processing.PRESET_DATA_ENV: str(path)}
     )
     expected = sample.reset_index(drop=True)
+    # JSON brings datetimes back in ns; pandas 3 creates them in us by default.
+    expected["when"] = expected["when"].astype("datetime64[ns]")
     pd.testing.assert_frame_equal(state["raw_df"], expected, check_index_type=False)
 
 

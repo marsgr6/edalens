@@ -143,6 +143,7 @@ def fake_colab(monkeypatch):
 
 
 def test_walk_in_colab_embeds_through_colabs_port_proxy(fake_streamlit, monkeypatch):
+    pytest.importorskip("IPython")  # Displaying needs IPython, as in any notebook.
     calls = fake_colab(monkeypatch)
     installs = []
     monkeypatch.setattr(
