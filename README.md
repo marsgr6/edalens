@@ -103,9 +103,13 @@ app.stop()                       # stops the server and deletes the temporary da
 ```
 
 The app is embedded with an iframe pointing at `127.0.0.1`, so it works in
-local Jupyter Notebook, JupyterLab and VS Code. It does not work when the
-kernel runs on another machine (JupyterHub, a remote server); in Colab use
-`run_colab()` below. The DataFrame is pickled to a private temporary file, and
+local Jupyter Notebook, JupyterLab and VS Code. In Google Colab, `walk()`
+embeds the app through Colab's own port proxy instead (and installs the
+requirements once, like `run_colab()`); there Streamlit's CORS and XSRF checks
+are turned off, because the proxied iframe is cross-site, and the server still
+listens on the VM's loopback only. If the frame stays blank or stuck on
+*Connecting…*, use `run_colab()` below. It does not work on JupyterHub or other
+remote kernels. The DataFrame is pickled to a private temporary file, and
 every browser session of that app starts from it; "Reset All" or a new upload
 replaces it for that session. Each `walk()` call starts its own server.
 

@@ -121,3 +121,43 @@ def test_app_starts_with_the_preloaded_dataframe(tmp_path, monkeypatch):
     assert app.session_state["data_loaded"] is True
     assert list(app.session_state["filtered_df"].columns) == ["x", "c"]
     assert len(app.dataframe) == 1  # The processed-data preview is shown.
+
+
+def test_walk_in_colab_embeds_through_the_port_proxy(fake_streamlit, monkeypatch):
+    installs = []
+    monkeypatch.setattr(notebook, "_in_colab", lambda: True)
+    monkeypatch.setattr(notebook, "_colab_proxy_url", lambda port: f"https://{port}-x.prod.colab.dev/")
+    monkeypatch.setattr("edaviz.colab.install_requirements", lambda: installs.append(1))
+    with edaviz.walk(pd.DataFrame({"x": [1]}), display=False) as app:
+        prefix = app.url.split("/", 3)[3]
+        assert app.embed_url == f"https://{app.server.port}-x.prod.colab.dev/{prefix}"
+        assert f'<iframe src="{app.embed_url}"' in app.iframe_html()
+        assert app.server.env["STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION"] == "false"
+        assert app.server.env["STREAMLIT_SERVER_ENABLE_CORS"] == "false"
+        assert Path(fetch(app.url + "env")) == app.data_path
+    assert installs == [1]
+
+
+def test_colab_proxy_failure_stops_the_server_and_points_to_run_colab(fake_streamlit, monkeypatch):
+    started = []
+    real_start = launcher.EDAVizServer.start
+
+    def tracking_start(self, *args, **kwargs):
+        started.append(self)
+        return real_start(self, *args, **kwargs)
+
+    def no_proxy(port):
+        raise RuntimeError("no frontend")
+
+    monkeypatch.setattr(launcher.EDAVizServer, "start", tracking_start)
+    monkeypatch.setattr(notebook, "_in_colab", lambda: True)
+    monkeypatch.setattr(notebook, "_colab_proxy_url", no_proxy)
+    with pytest.raises(launcher.LaunchError, match="run_colab"):
+        edaviz.walk(pd.DataFrame({"x": [1]}), display=False, install=False)
+    assert started and not started[0].running
+
+
+def test_local_walk_keeps_streamlit_protections(fake_streamlit):
+    with edaviz.walk(display=False) as app:
+        assert app.embed_url == app.url
+        assert not any(key.startswith("STREAMLIT_") for key in app.server.env)
