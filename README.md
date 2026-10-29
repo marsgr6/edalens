@@ -113,6 +113,25 @@ remote kernels. The DataFrame is pickled to a private temporary file, and
 every browser session of that app starts from it; "Reset All" or a new upload
 replaces it for that session. Each `walk()` call starts its own server.
 
+**Inside a notebook with no server at all** (exactly like pygwalker) —
+`mode="browser"` runs the same app in the notebook's browser with
+[stlite](https://github.com/whitphx/stlite) (Streamlit on WebAssembly). Nothing
+listens on a port and nothing is tunnelled, so it works in Colab, on
+JupyterHub and remote kernels as well as locally:
+
+```python
+app = edaviz.walk(df, mode="browser")
+app.save("edaviz.html")          # optional: a standalone page that opens in any browser
+```
+
+The app's code and the DataFrame are embedded in the cell output; the browser
+downloads Pyodide and the packages from jsDelivr on first use (20–60 s, then
+cached). Differences from the server mode: Prophet cannot run in WebAssembly,
+so forecasting is unavailable; the sidebar uses a plain radio menu (stlite
+cannot load custom components); the "Download Processed Data" button does not
+work; and a large DataFrame makes the output, and a saved notebook, large
+(sample it first). Changes made in the app do not flow back to the kernel.
+
 **Google Colab**: open
 [`notebooks/colab_edaviz.ipynb`](notebooks/colab_edaviz.ipynb) in Colab, or run:
 

@@ -5,12 +5,14 @@
 >>> app.url
 >>> app.stop()
 
-In Jupyter, ``edaviz.walk(df)`` shows the app inside the notebook with ``df`` loaded.
+In Jupyter, ``edaviz.walk(df)`` shows the app inside the notebook with ``df`` loaded;
+``edaviz.walk(df, mode="browser")`` runs it in the browser with no server (pygwalker style).
 In Google Colab, ``edaviz.run_colab()`` also opens a public localtunnel link.
 """
 
 from importlib.metadata import PackageNotFoundError, version
 
+from edaviz.browser import BrowserApp
 from edaviz.colab import ColabApp, run_colab
 from edaviz.launcher import EDAVizServer, LaunchError, show
 from edaviz.notebook import NotebookApp, walk
@@ -21,6 +23,7 @@ except PackageNotFoundError:  # Imported from a checkout without installation.
     __version__ = "0+unknown"
 
 __all__ = [
+    "BrowserApp",
     "ColabApp",
     "EDAVizServer",
     "LaunchError",

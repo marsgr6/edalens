@@ -4,7 +4,15 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-from prophet import Prophet
+try:
+    from prophet import Prophet
+except ImportError:  # In-browser mode (edaviz.walk(mode="browser")): prophet cannot run in WebAssembly.
+    class Prophet:
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "Prophet is not available when EDAViz runs inside the browser; "
+                "use edaviz.walk(df) or edaviz.show() for forecasting."
+            )
 from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.seasonal import seasonal_decompose
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf

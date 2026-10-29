@@ -13,6 +13,9 @@ proxied port is granted only to the output frame that asked for it, so the
 iframe must be created there by Colab's JavaScript, not from our HTML; and a
 "new tab" link cannot work. ``edaviz.run_colab()`` remains the fallback.
 
+``walk(df, mode="browser")`` needs no server, port or proxy at all: the app
+runs in the browser with stlite, like pygwalker (see ``edaviz.browser``).
+
 The DataFrame is pickled to a private temporary file whose path is passed to
 the app in ``EDAVIZ_DATA``; every browser session of that app starts with it.
 """
@@ -30,6 +33,7 @@ from typing import Dict, Optional
 
 import pandas as pd
 
+from edaviz.browser import BrowserApp, walk_browser
 from edaviz.launcher import STARTUP_TIMEOUT, EDAVizServer, LaunchError, choose_port
 
 DEFAULT_HEIGHT = 900
@@ -164,8 +168,14 @@ def walk(
     startup_timeout: float = STARTUP_TIMEOUT,
     display: bool = True,
     install: bool = True,
-) -> NotebookApp:
+    mode: str = "server",
+) -> "NotebookApp | BrowserApp":
     """Start EDAViz with ``df`` preloaded and show it in the notebook output.
+
+    ``mode="server"`` (default) runs a Streamlit server on the kernel machine.
+    ``mode="browser"`` runs the app inside the notebook's browser with stlite,
+    with no server, port or tunnel (works in Colab and on remote kernels);
+    ``port``, ``startup_timeout`` and ``install`` do not apply to it.
 
     ``df=None`` opens the app on its data-loading page. ``display=False`` only
     starts the server; call ``.display()`` on the result to show it later.
@@ -177,6 +187,10 @@ def walk(
         df = df.to_frame()
     if df is not None and not isinstance(df, pd.DataFrame):
         raise TypeError(f"walk() expects a pandas DataFrame or Series, not {type(df).__name__}.")
+    if mode == "browser":
+        return walk_browser(df, height=height, display=display)
+    if mode != "server":
+        raise ValueError(f"mode must be 'server' or 'browser', not {mode!r}.")
     colab = _in_colab()
     if colab and install:
         from edaviz.colab import install_requirements
@@ -206,4 +220,4 @@ def _stop_all() -> None:
         app.stop()
 
 
-__all__ = ["LaunchError", "NotebookApp", "walk"]
+__all__ = ["BrowserApp", "LaunchError", "NotebookApp", "walk"]

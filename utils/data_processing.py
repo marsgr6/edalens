@@ -301,7 +301,10 @@ def load_preset_data(
     path = environ.get(PRESET_DATA_ENV)
     if not path or state.get("preset_data_loaded"):
         return False
-    raw_df = pd.read_pickle(path)
+    if path.endswith(".json"):  # In-browser mode: pickles are not portable to Pyodide's pandas.
+        raw_df = pd.read_json(path, orient="table")
+    else:
+        raw_df = pd.read_pickle(path)
     for key in ("filtered_df", "current_numeric_cols", "current_categorical_cols", "is_imputed", "imputed_df"):
         state.pop(key, None)
     state["raw_df"] = raw_df.copy()

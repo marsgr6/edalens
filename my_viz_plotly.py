@@ -1,3 +1,5 @@
+import sys
+
 import streamlit as st
 from streamlit_option_menu import option_menu
 
@@ -6,14 +8,20 @@ from utils.data_processing import load_preset_data
 def main():
     st.set_page_config(layout="wide", page_title="EDAViz App", page_icon="🚀")
     load_preset_data(st.session_state)
+    pages = ["Load data", "Missing Data Imputation", "Visualization", "Time Series", "About"]
     with st.sidebar:
-        selected = option_menu(
-            menu_title="EDAViz",
-            options=["Load data", "Missing Data Imputation", "Visualization", "Time Series", "About"],
-            icons=["house", "gear", "bar-chart", "clock", "info-circle"],
-            menu_icon="cast",
-            default_index=0,
-        )
+        if sys.platform == "emscripten":
+            # In-browser mode (stlite) cannot serve a custom component's frontend files.
+            st.title("EDAViz")
+            selected = st.radio("Pages", pages, label_visibility="collapsed")
+        else:
+            selected = option_menu(
+                menu_title="EDAViz",
+                options=pages,
+                icons=["house", "gear", "bar-chart", "clock", "info-circle"],
+                menu_icon="cast",
+                default_index=0,
+            )
     
     if selected == "Load data":
         from views.home import home
