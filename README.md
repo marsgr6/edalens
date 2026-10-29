@@ -88,8 +88,25 @@ Use the printed URL as-is: each server gets a random path prefix so the
 launcher can tell its own server from anything else on the port. In a plain
 script, call `app.wait()` to keep the server running; servers still running
 when Python exits are stopped automatically. Startup failures and timeouts
-raise `edaviz.LaunchError` with the end of the server log. This phase only
-starts and stops the app; it does not embed it in notebooks or pass DataFrames.
+raise `edaviz.LaunchError` with the end of the server log.
+
+**Inside a Jupyter notebook** (like pygwalker) — `walk()` starts the app with
+your DataFrame already loaded and shows it in the cell output:
+
+```python
+import edaviz
+
+app = edaviz.walk(df)            # df (or a Series) is preloaded; walk() alone opens the upload page
+app = edaviz.walk(df, height=1100)
+app.display()                    # show the same app again in another cell
+app.stop()                       # stops the server and deletes the temporary data file
+```
+
+The app is embedded with an iframe pointing at `127.0.0.1`, so it works in
+local Jupyter Notebook, JupyterLab and VS Code. It does not work when the
+kernel runs on another machine (JupyterHub, a remote server, Colab). The DataFrame is pickled to a private temporary file, and
+every browser session of that app starts from it; "Reset All" or a new upload
+replaces it for that session. Each `walk()` call starts its own server.
 
 ### Try it with sample data
 

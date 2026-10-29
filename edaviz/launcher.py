@@ -18,7 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 import urllib.request
 import weakref
 import webbrowser
@@ -115,8 +115,9 @@ def _is_healthy(url: str) -> bool:
 class EDAVizServer:
     """Handle for one local EDAViz server process started by this launcher."""
 
-    def __init__(self, port: int) -> None:
+    def __init__(self, port: int, env: Optional[Dict[str, str]] = None) -> None:
         self.port = port
+        self.env = dict(env or {})  # Extra environment variables for the app process.
         self.url = f"http://{HOST}:{port}/edaviz-{secrets.token_hex(8)}/"
         self.log_path: Optional[Path] = None
         self._process: Optional[subprocess.Popen] = None
@@ -148,7 +149,7 @@ class EDAVizServer:
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                env={**os.environ, "PYTHONUNBUFFERED": "1", **self.env},
                 **options,
             )
         _running.add(self)

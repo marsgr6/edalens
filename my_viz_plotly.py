@@ -1,8 +1,11 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 
+from utils.data_processing import load_preset_data
+
 def main():
     st.set_page_config(layout="wide", page_title="EDAViz App", page_icon="🚀")
+    load_preset_data(st.session_state)
     with st.sidebar:
         selected = option_menu(
             menu_title="EDAViz",

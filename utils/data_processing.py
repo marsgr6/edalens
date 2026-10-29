@@ -7,6 +7,7 @@ input. Failures raise ``OperationError`` and leave session state untouched.
 """
 
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
+import os
 from typing import Any
 
 import numpy as np
@@ -19,6 +20,9 @@ Operation = Mapping[str, Any]
 DATE_FEATURES = ("Year", "Month", "Day", "DayOfWeek", "Hour")
 SAMPLE_SEED = 42
 KNN_NEIGHBORS = 5
+# Set by ``edaviz.walk(df)``: path of a pickled DataFrame to preload in every session.
+PRESET_DATA_ENV = "EDAVIZ_DATA"
+PRESET_DATA_LABEL = "DataFrame from notebook"
 
 
 class OperationError(ValueError):
@@ -285,6 +289,27 @@ def set_working_df(
     state["current_numeric_cols"] = numeric
     state["current_categorical_cols"] = categorical
     state["is_imputed"] = any(op.get("type") == "impute" for op in operations)
+
+
+def load_preset_data(
+    state: MutableMapping[str, Any], environ: Mapping[str, str] = os.environ
+) -> bool:
+    """Load the notebook's DataFrame into a new session; return whether it loaded.
+
+    Runs once per browser session, so "Reset All" or a new upload replaces it.
+    """
+    path = environ.get(PRESET_DATA_ENV)
+    if not path or state.get("preset_data_loaded"):
+        return False
+    raw_df = pd.read_pickle(path)
+    for key in ("filtered_df", "current_numeric_cols", "current_categorical_cols", "is_imputed", "imputed_df"):
+        state.pop(key, None)
+    state["raw_df"] = raw_df.copy()
+    set_working_df(state, raw_df.copy(), [])
+    state["last_uploaded_file"] = PRESET_DATA_LABEL
+    state["data_loaded"] = True
+    state["preset_data_loaded"] = True
+    return True
 
 
 def run_operation(state: MutableMapping[str, Any], operation: Operation) -> pd.DataFrame:
