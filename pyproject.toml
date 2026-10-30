@@ -1,6 +1,6 @@
 [project]
 name = "edalens"
-version = "0.1.0"
+version = "0.1.1"
 description = "Interactive exploratory data analysis with Streamlit and Plotly, in the browser or inside notebooks"
 readme = "README.md"
 requires-python = ">=3.10"

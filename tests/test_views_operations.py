@@ -35,6 +35,7 @@ def loaded_app(page, frame: pd.DataFrame, tracking: bool = False) -> AppTest:
     app.session_state["current_numeric_cols"] = numeric
     app.session_state["current_categorical_cols"] = categorical
     app.session_state["data_loaded"] = True
+    app.session_state["data_version"] = 1  # As set_working_df does.
     return app
 
 
@@ -55,7 +56,9 @@ def test_failed_home_operation_shows_error_and_keeps_state():
     app = loaded_app(home_page, frame)
     app.run()
 
-    app.multiselect(key="melt_keys").set_value(["id", "x"])
+    app.multiselect(key=f"melt_keys_{app.session_state['data_version']}").set_value(
+        ["id", "x"]
+    )
     button(app, "Apply Melting").click()
     app.run()
 
@@ -113,7 +116,9 @@ def test_undo_of_only_operation_restores_raw_data_and_reset_clears_session():
     tracking_checkbox(app).check()
     app.run()
 
-    app.multiselect(key="select_columns").set_value(["a"])
+    app.multiselect(
+        key=f"select_columns_{app.session_state['data_version']}"
+    ).set_value(["a"])
     button(app, "Apply Column Selection").click()
     app.run()
     assert list(app.session_state["filtered_df"].columns) == ["a"]
@@ -148,3 +153,46 @@ def test_visualization_does_not_mutate_the_shared_working_frame():
     assert not app.exception
     assert app.session_state["filtered_df"]["group"].dtype == "category"
     assert_frame_equal(app.session_state["filtered_df"], frame)
+
+
+def test_column_widgets_show_the_columns_of_each_newly_loaded_file(monkeypatch):
+    # Widgets keyed only by name kept the previous file's selection; Streamlit then
+    # dropped the columns that no longer exist and showed the boxes empty.
+    import requests
+
+    files = {
+        "https://example.com/tips.csv": b"total_bill,tip,sex\n16.99,1.01,Female\n10.34,1.66,Male\n",
+        "https://example.com/iris.csv": b"sepal_length,species\n5.1,setosa\n7.0,versicolor\n",
+    }
+
+    class Response:
+        def __init__(self, url):
+            self.content = files[url]
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(requests, "get", lambda url, *args, **kwargs: Response(url))
+    app = AppTest.from_function(home_page, default_timeout=30)
+    app.run()
+    for url, columns, numeric, categorical in [
+        (
+            "https://example.com/tips.csv",
+            ["total_bill", "tip", "sex"],
+            ["total_bill", "tip"],
+            ["sex"],
+        ),
+        (
+            "https://example.com/iris.csv",
+            ["sepal_length", "species"],
+            ["sepal_length"],
+            ["species"],
+        ),
+    ]:
+        app.text_input[0].set_value(url)
+        button(app, "Load from GitHub").click()
+        app.run()
+        version = app.session_state["data_version"]
+        assert app.multiselect(key=f"select_columns_{version}").value == columns
+        assert app.multiselect(key=f"numeric_cols_{version}").value == numeric
+        assert app.multiselect(key=f"categorical_cols_{version}").value == categorical

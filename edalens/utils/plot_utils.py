@@ -23,6 +23,9 @@ DISTRIBUTION_MARGINAL_PX_PER_GROUP = 130
 DISTRIBUTION_MARGINAL_PX = (200, 450)
 RIGHT_MARGINAL_MAX_PX = 260  # of the 800 px design width, so the main plot stays dominant
 FIGURE_CHROME_PX = 140
+# Violin thickness in category units (1 = the whole slot of one group). Plotly's
+# automatic width draws the top (horizontal) violins as thin slivers here.
+MARGINAL_VIOLIN_WIDTH = 0.7
 
 
 def _rgba(color: str, alpha: float) -> str:
@@ -101,7 +104,7 @@ def _marginal_traces(
         return [
             go.Violin(
                 **{axis: values}, orientation="h" if axis == "x" else "v", box_visible=True,
-                spanmode="hard", points=_OUTLIER_POINTS["boxpoints"],
+                width=MARGINAL_VIOLIN_WIDTH, spanmode="hard", points=_OUTLIER_POINTS["boxpoints"],
                 **{k: v for k, v in _OUTLIER_POINTS.items() if k != "boxpoints"}, **common,
             )
         ]

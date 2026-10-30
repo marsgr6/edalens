@@ -10,6 +10,7 @@ from streamlit.testing.v1 import AppTest
 
 from edalens.utils.plot_utils import (
     MARGINAL_KINDS,
+    MARGINAL_VIOLIN_WIDTH,
     lowess_fit,
     numeric_heatmap_figure,
     polynomial_fit,
@@ -302,3 +303,13 @@ def test_heatmap_page_renders_with_mixed_columns():
     assert not app.exception
     spec = json.loads(app.get("plotly_chart")[-1].proto.spec)
     assert spec["data"][0]["x"] == ["temp", "pressure", "rain", "const"]
+
+
+def test_marginal_violins_have_an_explicit_width_in_both_orientations():
+    # Plotly's automatic width drew the top (horizontal) violins as thin slivers.
+    fig = regression_figure(
+        sample_frame(), "x", "y", hue="group", marginal_x="violin", marginal_y="violin"
+    )
+    violins = traces(fig, "violin")
+    assert {v.orientation for v in violins} == {"h", "v"}
+    assert all(v.width == MARGINAL_VIOLIN_WIDTH for v in violins)

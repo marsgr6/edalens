@@ -21,6 +21,11 @@ def _run(operation, success_message):
     st.success(success_message(df) if callable(success_message) else success_message)
     return df
 
+def _key(name):
+    """Widget key tied to the current working frame (see ``set_working_df``)."""
+    return f"{name}_{st.session_state.get('data_version', 0)}"
+
+
 def home():
     st.subheader("🏠 Data Upload & Selection")
 
@@ -143,7 +148,7 @@ def home():
             "Select columns to keep",
             options=df.columns.tolist(),
             default=df.columns.tolist(),
-            key="select_columns"
+            key=_key("select_columns")
         )
         if st.button("Apply Column Selection"):
             if selected_columns:
@@ -161,13 +166,13 @@ def home():
             "Select Numeric Variables",
             options=df.columns.tolist(),
             default=st.session_state["current_numeric_cols"],
-            key="numeric_cols"
+            key=_key("numeric_cols")
         )
         categorical_cols = st.multiselect(
             "Select Categorical Variables",
             options=[col for col in df.columns if col not in numeric_cols],
             default=st.session_state["current_categorical_cols"],
-            key="categorical_cols"
+            key=_key("categorical_cols")
         )
         if st.button("Apply Variable Types"):
             result = _run(
@@ -187,7 +192,7 @@ def home():
             min_value=1,
             max_value=100,
             value=100,
-            key="sample_pct"
+            key=_key("sample_pct")
         )
         if st.button("Apply Subsampling"):
             result = _run(
@@ -201,7 +206,7 @@ def home():
         id_vars = st.multiselect(
             "Select ID Variables for Melting",
             options=df.columns.tolist(),
-            key="melt_keys"
+            key=_key("melt_keys")
         )
         if st.button("Apply Melting"):
             if id_vars:
@@ -218,7 +223,7 @@ def home():
             "Select Date Column to Extract Features (optional)",
             options=["None"] + df.columns.tolist(),
             index=0,
-            key="date_column"
+            key=_key("date_column")
         )
         dayfirst_option = st.checkbox("Use Day First when Parsing Dates (e.g., 31/12/2023)", value=True)
         if st.button("Parse Date and Create Features"):

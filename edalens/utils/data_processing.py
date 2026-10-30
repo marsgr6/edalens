@@ -282,8 +282,14 @@ def column_types(df: pd.DataFrame) -> tuple[list[str], list[str]]:
 def set_working_df(
     state: MutableMapping[str, Any], df: pd.DataFrame, operations: list[dict]
 ) -> None:
-    """Store a validated working frame together with its operation history."""
+    """Store a validated working frame together with its operation history.
+
+    ``data_version`` changes with every new frame; views put it in widget keys
+    so widgets restart from the new columns instead of keeping selections of
+    columns that no longer exist (which Streamlit would show as empty).
+    """
     numeric, categorical = column_types(df)
+    state["data_version"] = state.get("data_version", 0) + 1
     state["filtered_df"] = df
     state["operations"] = operations
     state["current_numeric_cols"] = numeric
