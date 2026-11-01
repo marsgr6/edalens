@@ -25,6 +25,7 @@ from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 import matplotlib.pyplot as plt
 import requests
 import io
+from edalens.utils import forecasting
 from edalens.utils.ui import sidebar_menu
 
 
@@ -49,6 +50,51 @@ def _require_prophet(section):
             "(`edalens.walk(df, mode=\"browser\")`). Use `edalens.walk(df)` or `edalens.show()` for this section."
         )
         st.stop()
+
+
+# Forecast horizon slider (min, max, default) per summarization frequency.
+HORIZON_BY_GRANULARITY = {
+    "None": ("steps", 1, 365, 30), "Hourly": ("hours", 24, 8760, 720), "Daily": ("days", 7, 365, 30),
+    "Weekly": ("weeks", 1, 52, 4), "Monthly": ("months", 1, 36, 12),
+    "Quarterly": ("quarters", 1, 12, 4), "Yearly": ("years", 1, 10, 3),
+}
+
+
+def _statsmodels_forecasting(df, variables, method, time_granularity, aggregation_method, resample_map):
+    """Forecast each variable with a statsmodels model; works in the browser too."""
+    unit, low, high, default = HORIZON_BY_GRANULARITY[time_granularity]
+    horizon = st.slider(f"Forecast horizon ({unit})", low, high, default)
+    col_ci, col_flag, col_contamination = st.columns(3)
+    ci_level = col_ci.select_slider("Prediction interval (%)", options=[80, 90, 95, 99], value=95)
+    flag = col_flag.checkbox(
+        "Flag anomalies (Isolation Forest)", value=True,
+        help="Runs Isolation Forest on the model's residuals, so points are flagged when they are "
+             "unusual for their trend and season, not only when they are extreme.",
+    )
+    contamination = col_contamination.slider("Contamination", 0.01, 0.2, 0.05, 0.01, disabled=not flag)
+
+    tabs = st.tabs(variables) if len(variables) > 1 else [st.container()]
+    for col, tab in zip(variables, tabs):
+        with tab:
+            series = df[col]
+            if time_granularity != "None":
+                series = series.resample(resample_map[time_granularity]).agg(aggregation_method.lower())
+            try:
+                series = forecasting.regular_series(series)
+                season = forecasting.season_length(series, time_granularity)
+                with st.spinner(f"Fitting {method}..."):
+                    result = forecasting.fit_forecast(series, method, horizon, season, ci_level)
+            except forecasting.ForecastError as exc:
+                st.warning(str(exc))
+                continue
+            anomalies = forecasting.residual_anomalies(result, contamination) if flag else None
+            title = f"{method} forecast for {col} ({aggregation_method if time_granularity != 'None' else 'Raw'})"
+            st.plotly_chart(
+                forecasting.forecast_figure(result, title, col, ci_level, anomalies), use_container_width=True
+            )
+            season_note = f"season of {season} steps" if season else "no seasonality (fewer than two full seasons)"
+            anomaly_note = f" · {int(anomalies.sum())} anomalous points flagged" if anomalies is not None else ""
+            st.caption(f"{len(series)} observations · {season_note}{anomaly_note}")
 
 
 def time_series_analysis():
@@ -588,10 +634,17 @@ def time_series_analysis():
         st.plotly_chart(fig, use_container_width=True)
 
     elif analysis_section == "Forecasting":
-        _require_prophet("Forecasting")
         st.subheader(f"📈 Forecasting")
+        methods = (["Prophet"] if PROPHET_AVAILABLE else []) + list(forecasting.METHODS)
+        method = st.selectbox(
+            "Model", methods,
+            help="Holt-Winters (ETS) and SARIMA come from statsmodels and also work in browser mode; "
+                 "Prophet needs a server (edalens.walk(df) or edalens.show()).",
+        )
 
-        if use_multi and len(selected_vars) > 1:
+        if method != "Prophet":
+            _statsmodels_forecasting(df, selected_vars, method, time_granularity, aggregation_method, resample_map)
+        elif use_multi and len(selected_vars) > 1:
             st.info("🔢 Forecasting uses Prophet (univariate) → one tab per variable")
             tabs = st.tabs(selected_vars)
             for idx, col in enumerate(selected_vars):

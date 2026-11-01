@@ -32,3 +32,42 @@ def test_analysis_menu_is_a_radio_in_the_browser(monkeypatch):
     menu = app.sidebar.radio[0]
     assert menu.value == "Load Data"
     assert "Forecasting" in menu.options
+
+
+def monthly_csv(years: int = 8) -> bytes:
+    dates = pd.date_range("2010-01-01", periods=12 * years, freq="MS")
+    values = [50 + 20 * ((i % 12) in (5, 6, 7)) + i * 0.1 for i in range(len(dates))]
+    frame = pd.DataFrame({"FECHA": dates.strftime("%d/%m/%Y"), "rain": values})
+    return frame.to_csv(index=False).encode()
+
+
+@pytest.mark.parametrize("model", ["Holt-Winters (ETS)", "SARIMA"])
+def test_forecasting_section_runs_statsmodels_models(monkeypatch, model):
+    import requests
+
+    class Response:
+        content = monthly_csv()
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(
+        sys, "platform", "emscripten"
+    )  # Radio menu, drivable in AppTest.
+    app = AppTest.from_function(time_series_page, default_timeout=60)
+    app.run()
+    next(r for r in app.radio if r.label == "Select data source").set_value(
+        "GitHub Link"
+    )
+    app.run()
+    app.text_input[0].set_value("https://example.com/rain.csv")
+    app.run()
+    app.sidebar.radio[0].set_value("Forecasting")
+    app.run()
+    next(s for s in app.selectbox if s.label == "Model").set_value(model)
+    app.run()
+
+    assert not app.exception
+    assert not app.warning, [w.value for w in app.warning]
+    assert any("observations" in caption.value for caption in app.caption)
