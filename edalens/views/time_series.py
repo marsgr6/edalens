@@ -6,8 +6,14 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 try:
     from prophet import Prophet
+
+    PROPHET_AVAILABLE = True
 except ImportError:  # In-browser mode (edalens.walk(mode="browser")): prophet cannot run in WebAssembly.
+    PROPHET_AVAILABLE = False
+
     class Prophet:
+        """Stand-in that explains why Prophet-based sections are unavailable."""
+
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "Prophet is not available when EDALens runs inside the browser; "
@@ -19,16 +25,39 @@ from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 import matplotlib.pyplot as plt
 import requests
 import io
-from streamlit_option_menu import option_menu
+from edalens.utils.ui import sidebar_menu
+
+
+def _frequency_aliases():
+    """Resample aliases for this pandas: 2.2 renamed H/M/Q/Y to h/ME/QE/YE and pandas 3 rejects the old ones."""
+    try:
+        pd.tseries.frequencies.to_offset("ME")
+    except ValueError:
+        return {"Hourly": "H", "Monthly": "M", "Quarterly": "Q", "Yearly": "Y"}
+    return {"Hourly": "h", "Monthly": "ME", "Quarterly": "QE", "Yearly": "YE"}
+
+
+FREQ = _frequency_aliases()
+CALENDAR_YEAR_PX = 180  # Height per year of the daily calendar heatmap.
+
+
+def _require_prophet(section):
+    """Explain and stop the page when Prophet cannot run (in-browser mode)."""
+    if not PROPHET_AVAILABLE:
+        st.info(
+            f"**{section}** uses Prophet, which cannot run when EDALens runs inside the browser "
+            "(`edalens.walk(df, mode=\"browser\")`). Use `edalens.walk(df)` or `edalens.show()` for this section."
+        )
+        st.stop()
 
 
 def time_series_analysis():
     #st.subheader("📈 Time Series Analysis & Anomaly Detection")
 
     with st.sidebar:
-        analysis_section = option_menu(
-            menu_title="Analysis Section",
-            options=[
+        analysis_section = sidebar_menu(
+            "Analysis Section",
+            [
                 "Load Data",
                 "Time Series Visualization",
                 "Decomposition & ACF/PACF",
@@ -42,7 +71,6 @@ def time_series_analysis():
             ],
             icons=["upload", "bar-chart", "graph-up", "exclamation-triangle", "clock", "calendar", "heatmap", "predict", "pin-angle", "trending-up"],
             menu_icon="clock",
-            default_index=0,
         )
 
     if analysis_section == "Load Data":
@@ -153,8 +181,8 @@ def time_series_analysis():
     window = st.sidebar.number_input("Rolling Window (set 0 for no smoothing)", min_value=0, max_value=60, value=0)
 
     resample_map = {
-        "None": None, "Hourly": "H", "Daily": "D", "Weekly": "W",
-        "Monthly": "M", "Quarterly": "Q", "Yearly": "Y"
+        "None": None, "Hourly": FREQ["Hourly"], "Daily": "D", "Weekly": "W",
+        "Monthly": FREQ["Monthly"], "Quarterly": FREQ["Quarterly"], "Yearly": FREQ["Yearly"]
     }
     resample_freq = resample_map[time_granularity]
 
@@ -249,7 +277,9 @@ def time_series_analysis():
         if use_multi and len(selected_vars) > 1:
             st.info(f"🔢 Decomposition is univariate → using **{selected_col}**")
 
-        decomposition_method = st.selectbox("Select Decomposition Method", ["Statsmodels", "Prophet"], index=0)
+        decomposition_method = st.selectbox(
+            "Select Decomposition Method", ["Statsmodels"] + (["Prophet"] if PROPHET_AVAILABLE else []), index=0
+        )
 
         if decomposition_method == "Statsmodels":
             window_dec = st.slider("Seasonal window for decomposition", 2, 60, 12)
@@ -393,6 +423,7 @@ def time_series_analysis():
             daily_df.columns = ['date', selected_col]
 
             greens = ["#161b22", "#0e4429", "#006d32", "#26a641", "#39d353"]
+            n_years = max(1, daily_df["date"].dt.year.nunique())
 
             fig = calheatmap(
                 data=daily_df,
@@ -409,7 +440,9 @@ def time_series_analysis():
                 vertical=False,
                 navigation=False,
                 skip_empty_years=True,
-                total_height=380 * max(1, len(daily_df['date'].dt.year.unique())),
+                # One row per year: Plotly needs the gap below 1 / (rows - 1).
+                total_height=CALENDAR_YEAR_PX * n_years,
+                space_between_plots=min(0.08, 0.5 / max(1, n_years - 1)),
                 gap=2,
                 title=f"Daily Calendar Heatmap – {selected_col} ({aggregation_method})"
             )
@@ -422,7 +455,7 @@ def time_series_analysis():
                         help="Applies to both Daily and Hourly heatmaps"
                     )
             # Hourly view — month grid like your screenshot
-            hourly_df = df[[selected_col]].resample('H').agg(agg_method).reset_index()
+            hourly_df = df[[selected_col]].resample(FREQ["Hourly"]).agg(agg_method).reset_index()
             hourly_df.columns = ['datetime', selected_col]
             hourly_df[selected_col] = hourly_df[selected_col].ffill().fillna(0)
 
@@ -555,6 +588,7 @@ def time_series_analysis():
         st.plotly_chart(fig, use_container_width=True)
 
     elif analysis_section == "Forecasting":
+        _require_prophet("Forecasting")
         st.subheader(f"📈 Forecasting")
 
         if use_multi and len(selected_vars) > 1:
@@ -662,6 +696,7 @@ def time_series_analysis():
     # CHANGEPOINT ANALYSIS WITH PROPHET
     # ============================================================
     elif analysis_section == "Changepoint Analysis":
+        _require_prophet("Changepoint Analysis")
 
         st.subheader("🔍 Changepoint Analysis (Prophet)")
 
