@@ -113,6 +113,14 @@ class NotebookApp:
             )
         )
 
+    def reports(self) -> list:
+        """Reports sent from the app's Report page, oldest first (``edalens.Report``)."""
+        return self.server.reports()
+
+    def report(self):
+        """The report most recently sent from the app's Report page (``edalens.Report``)."""
+        return self.server.report()
+
     def stop(self) -> None:
         """Stop the app and delete the data file; safe to call repeatedly."""
         self.server.stop()

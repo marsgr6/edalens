@@ -28,6 +28,8 @@ PORT_SEARCH_LIMIT = 50  # Ports tried, starting at DEFAULT_PORT, when none is gi
 STARTUP_TIMEOUT = 60.0
 STOP_TIMEOUT = 10.0
 LOG_TAIL_LINES = 20
+# Same name as edalens.utils.report.REPORT_DIR_ENV; not imported to keep the launcher light.
+REPORT_DIR_ENV = "EDALENS_REPORT_DIR"
 
 _running: "weakref.WeakSet[EDALensServer]" = weakref.WeakSet()
 
@@ -119,6 +121,8 @@ class EDALensServer:
         self.env = dict(env or {})  # Extra environment variables for the app process.
         self.url = f"http://{HOST}:{port}/edalens-{secrets.token_hex(8)}/"
         self.log_path: Optional[Path] = None
+        # Where the app's "Send to Python" button saves reports (see reports()).
+        self.report_dir: Optional[Path] = None
         self._process: Optional[subprocess.Popen] = None
 
     @property
@@ -133,6 +137,7 @@ class EDALensServer:
         script = app_script()
         log_fd, log_name = tempfile.mkstemp(prefix="edalens-", suffix=".log")
         self.log_path = Path(log_name)
+        self.report_dir = Path(tempfile.mkdtemp(prefix="edalens-reports-"))
         if os.name == "nt":
             # Own process group: Ctrl+C in the caller's console does not reach it,
             # and stop() can send CTRL_BREAK_EVENT to this process alone.
@@ -159,6 +164,7 @@ class EDALensServer:
                             [str(script.parent.parent), os.environ.get("PYTHONPATH")],
                         )
                     ),
+                    REPORT_DIR_ENV: str(self.report_dir),
                     **self.env,
                 },
                 **options,
@@ -174,6 +180,28 @@ class EDALensServer:
                 self._fail(f"EDALens was not ready within {startup_timeout:g} s.")
             time.sleep(0.2)
         return self
+
+    def reports(self) -> list:
+        """Reports sent from the app's Report page ("Send to Python"), oldest first.
+
+        They are ``edalens.Report`` objects: ``.save_html()``, ``.save_pdf()``, ``.add()``.
+        The files stay in ``report_dir`` (a temporary folder) after the server stops.
+        """
+        from edalens.utils.report import Report
+
+        if self.report_dir is None:
+            return []
+        return [Report.load(path) for path in sorted(self.report_dir.glob("*.json"))]
+
+    def report(self):
+        """The report most recently sent from the app's Report page."""
+        reports = self.reports()
+        if not reports:
+            raise LookupError(
+                "No report yet: in the app, add charts with ➕ Add to report, then open the "
+                "Report page and click 💾 Send to Python."
+            )
+        return reports[-1]
 
     def wait(self) -> Optional[int]:
         """Block until the server exits; return its exit code."""

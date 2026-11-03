@@ -7,11 +7,13 @@ import re
 import streamlit as st
 
 from edalens.utils.export import CONTEXTS, DEFAULT_CONTEXT, ExportError, figure_pdf
+from edalens.utils.report import Report
 
 # Formats the chart toolbar's camera button can save (Plotly.js, in the browser).
 IMAGE_FORMATS = ("png", "svg", "jpeg", "webp")
 IMAGE_FORMAT_KEY = "chart_image_format"
 PDF_CONTEXT_KEY = "chart_pdf_context"
+REPORT_KEY = "report"
 _CHART_COUNT_KEY = "_chart_count"
 
 
@@ -90,34 +92,55 @@ def _file_name(fig, default: str) -> str:
     return (re.sub(r"[^\w-]+", "_", title).strip("_")[:60] or default) + ".pdf"
 
 
-def _pdf_download(fig, key: str) -> None:
-    """A "Prepare PDF" button; once clicked, the download of that chart.
+def report() -> Report:
+    """This session's report (the charts saved with "Add to report")."""
+    if REPORT_KEY not in st.session_state:
+        st.session_state[REPORT_KEY] = Report()
+    return st.session_state[REPORT_KEY]
 
-    The PDF is rendered only on request (kaleido takes a few seconds). Not shown in
-    the browser (stlite), where kaleido cannot run and downloads do not work.
-    """
-    if in_browser():
-        return
-    if not st.button("📄 Prepare PDF", key=f"{key}_pdf", type="tertiary"):
-        return
+
+def _add_to_report(fig) -> None:
+    item = report().add(fig)
+    count = len(report().items)
+    st.toast(f"Added “{item.title}” to the report ({count} chart{'s' if count != 1 else ''}).", icon="➕")
+
+
+def _toolbar():
+    """A row for the buttons under a chart (a plain block on Streamlit < 1.46)."""
     try:
-        with st.spinner("Rendering PDF..."):
-            data = figure_pdf(fig, st.session_state.get(PDF_CONTEXT_KEY, DEFAULT_CONTEXT))
-    except ExportError as exc:
-        st.warning(str(exc))
-        return
-    st.download_button(
-        "⬇️ Download PDF",
-        data,
-        file_name=_file_name(fig, key),
-        mime="application/pdf",
-        key=f"{key}_pdf_download",
-        on_click="ignore",
-    )
+        return st.container(horizontal=True, gap="small")
+    except TypeError:
+        return st.container()
+
+
+def _chart_actions(fig, key: str) -> None:
+    """"Add to report" and, on a server, "Prepare PDF" then its download.
+
+    The PDF is rendered only on request (kaleido takes a few seconds). It is not
+    offered in the browser (stlite), where kaleido cannot run and downloads do not work.
+    """
+    with _toolbar():
+        st.button("➕ Add to report", key=f"{key}_report", type="tertiary", on_click=_add_to_report, args=(fig,))
+        if in_browser() or not st.button("📄 Prepare PDF", key=f"{key}_pdf", type="tertiary"):
+            return
+        try:
+            with st.spinner("Rendering PDF..."):
+                data = figure_pdf(fig, st.session_state.get(PDF_CONTEXT_KEY, DEFAULT_CONTEXT))
+        except ExportError as exc:
+            st.warning(str(exc))
+            return
+        st.download_button(
+            "⬇️ Download PDF",
+            data,
+            file_name=_file_name(fig, key),
+            mime="application/pdf",
+            key=f"{key}_pdf_download",
+            on_click="ignore",
+        )
 
 
 def plotly_chart(fig, **kwargs) -> None:
-    """``st.plotly_chart`` with the chosen camera format and a PDF download."""
+    """``st.plotly_chart`` with the chosen camera format, "Add to report" and a PDF download."""
     image_format = st.session_state.get(IMAGE_FORMAT_KEY, "png")
     config = {
         "toImageButtonOptions": {
@@ -128,11 +151,11 @@ def plotly_chart(fig, **kwargs) -> None:
     }
     key = _chart_key()
     st.plotly_chart(fig, config=config, key=key, **kwargs)
-    _pdf_download(fig, key)
+    _chart_actions(fig, key)
 
 
 def pyplot(fig, **kwargs) -> None:
-    """``st.pyplot`` with a PDF download."""
+    """``st.pyplot`` with "Add to report" and a PDF download."""
     key = _chart_key()
     st.pyplot(fig, **kwargs)
-    _pdf_download(fig, key)
+    _chart_actions(fig, key)

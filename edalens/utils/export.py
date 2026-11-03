@@ -149,3 +149,31 @@ def figure_pdf(fig, context: str = DEFAULT_CONTEXT) -> bytes:
         return fig.to_image(format="pdf")  # kaleido 0.2 bundles its own Chromium.
     except Exception as exc:
         raise ExportError(f"{PDF_HELP}\n\nDetails: {exc}") from exc
+
+
+def figures_pdf(figs, context: str = DEFAULT_CONTEXT) -> list:
+    """PDF bytes for several Plotly figures, rendered with one browser when possible.
+
+    Starting Chrome takes seconds; kaleido >= 1 renders a batch in one session.
+    """
+    if context not in CONTEXTS:
+        raise ValueError(f"Unknown context {context!r}; choose one of {', '.join(CONTEXTS)}.")
+    try:
+        import kaleido
+    except ImportError as exc:
+        raise ExportError(PDF_HELP) from exc
+    if not hasattr(kaleido, "write_fig_from_object_sync"):
+        return [figure_pdf(fig, context) for fig in figs]
+    import tempfile
+    from pathlib import Path
+
+    scaled = [scaled_figure(fig, context) for fig in figs]
+    with tempfile.TemporaryDirectory(prefix="edalens-pdf-") as folder:
+        paths = [Path(folder) / f"page-{i}.pdf" for i in range(len(scaled))]
+        try:
+            kaleido.write_fig_from_object_sync(
+                [dict(fig=fig, path=path, opts=dict(format="pdf")) for fig, path in zip(scaled, paths)]
+            )
+            return [path.read_bytes() for path in paths]
+        except Exception as exc:
+            raise ExportError(f"{PDF_HELP}\n\nDetails: {exc}") from exc

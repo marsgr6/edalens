@@ -109,7 +109,25 @@ format would parse more of them); data is sorted and indexed by date.
 | Changepoint Analysis | Prophet changepoints, selected by importance percentile (Auto) or a fixed count |
 | Trend Analysis | Linear and quadratic trend lines over the observed series |
 
-## 5. Example datasets
+## 5. Report
+
+Click **➕ Add to report** under any chart on Visualization or Time Series to save
+it. The **Report** page collects the saved charts in order:
+
+- Edit each chart's title and an optional note; move it up or down, or remove it.
+- Choose a 1- or 2-column dashboard and preview it on the page.
+- **🌐 Build HTML** downloads a single static page with interactive charts
+  (plotly.js embedded for offline use, or loaded from the CDN).
+- **📄 Build PDF** writes a contents page and one page per chart (title and note
+  on top), scaled by the sidebar's PDF text and line size.
+- **🔗 Publish link** serves the page from the app at `?report=<id>` until the
+  server restarts.
+- **💾 Send to Python** saves the report for `app.report()` when the app was
+  started with `edalens.walk(df)` or `edalens.show()`.
+
+The report lives in the browser session: reloading the page starts a new, empty one.
+
+## 6. Example datasets
 
 From [marsgr6/r-scripts › data/viz_data](https://github.com/marsgr6/r-scripts/tree/master/data/viz_data):
 

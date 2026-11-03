@@ -155,6 +155,16 @@ class BrowserApp:
 
         display(HTML(self.iframe_html(height)))
 
+    def report(self):
+        """Not available: the browser-mode app has no way to reach this Python session."""
+        raise RuntimeError(
+            "In browser mode the app runs in your browser and cannot send reports to Python. "
+            "On its Report page, use 🌐 Build HTML to download the dashboard, or start the app "
+            "with edalens.walk(df) (server mode) to use app.report()."
+        )
+
+    reports = report
+
     def save(self, path: str | Path) -> Path:
         """Write the app as a standalone HTML file that opens in any browser."""
         path = Path(path)

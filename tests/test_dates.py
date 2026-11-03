@@ -44,3 +44,9 @@ def test_date_features_read_iso_dates_with_day_first_checked():
     )
     assert result["Month"].tolist() == [1, 1]
     assert result["Day"].tolist() == [5, 20]
+
+
+def test_month_names_alone_are_not_dates():
+    # pandas 3 parses "Jan" as 0001-01-01; such text must stay categorical.
+    assert parse_dates(pd.Series(["Jan", "Feb", None]), True).isna().all()
+    assert days(["Jan 2025", "Feb 2025"], True) == ["2025-01-01", "2025-02-01"]

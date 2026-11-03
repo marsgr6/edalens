@@ -8,6 +8,7 @@
 In Jupyter, ``edalens.walk(df)`` shows the app inside the notebook with ``df`` loaded;
 ``edalens.walk(df, mode="browser")`` runs it in the browser with no server (pygwalker style).
 In Google Colab, ``edalens.run_colab()`` also opens a public localtunnel link.
+Charts saved in the app's Report page come back with ``app.report()`` (an ``edalens.Report``).
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -16,6 +17,7 @@ from edalens.browser import BrowserApp
 from edalens.colab import ColabApp, run_colab
 from edalens.launcher import EDALensServer, LaunchError, show
 from edalens.notebook import NotebookApp, walk
+from edalens.utils.report import Report
 
 try:
     __version__ = version("edalens")
@@ -28,6 +30,7 @@ __all__ = [
     "EDALensServer",
     "LaunchError",
     "NotebookApp",
+    "Report",
     "run_colab",
     "show",
     "walk",

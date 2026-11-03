@@ -162,7 +162,9 @@ def parse_dates(values: pd.Series, dayfirst: bool) -> pd.Series:
             if parsed.notna().sum() < len(text):  # e.g. 2023/01/05: no single ISO form.
                 parsed = pd.to_datetime(values, errors="coerce", format="mixed", dayfirst=False)
             return parsed
-        return pd.to_datetime(values, errors="coerce", dayfirst=dayfirst)
+        parsed = pd.to_datetime(values, errors="coerce", dayfirst=dayfirst)
+    # pandas 3 reads bare month names ("Jan") as dates in year 1; text with no digits is not a date.
+    return parsed.where(values.astype(str).str.contains(r"\d", regex=True) | values.isna())
 
 
 def _date_features(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:

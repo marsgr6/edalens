@@ -5,13 +5,18 @@ from edalens.utils.ui import export_settings, sidebar_menu
 
 def main():
     st.set_page_config(layout="wide", page_title="EDALens App", page_icon="🚀")
+    published = st.query_params.get("report")
+    if published:  # A link from "Publish link" on the Report page.
+        from edalens.views.report import show_published
+        show_published(published)
+        return
     load_preset_data(st.session_state)
-    pages = ["Load data", "Missing Data Imputation", "Visualization", "Time Series", "About"]
+    pages = ["Load data", "Missing Data Imputation", "Visualization", "Time Series", "Report", "About"]
     with st.sidebar:
         selected = sidebar_menu(
-            "EDALens", pages, icons=["house", "gear", "bar-chart", "clock", "info-circle"], menu_icon="cast"
+            "EDALens", pages, icons=["house", "gear", "bar-chart", "clock", "journal-richtext", "info-circle"], menu_icon="cast"
         )
-        if selected in ("Visualization", "Time Series"):
+        if selected in ("Visualization", "Time Series", "Report"):
             export_settings()
     
     if selected == "Load data":
@@ -26,6 +31,9 @@ def main():
     elif selected == "Time Series":
         from edalens.views.time_series import time_series_analysis
         time_series_analysis()
+    elif selected == "Report":
+        from edalens.views.report import report_page
+        report_page()
     elif selected == "About":
         from edalens.views.about import about
         about()

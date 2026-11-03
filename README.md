@@ -36,6 +36,7 @@ edalens.show()                      # the app in its own browser tab
 | **Missing Data Imputation** | Per-column missing counts/percentages · drop rows with any NaN · impute (KNN for numeric, mode for categorical) |
 | **Visualization** | 17 plot types: bars, boxes (box/violin), lineplot, histogram, density 1 (1-D KDE), density 2 (2-D hist/KDE), scatter (2-D or 3-D), catplot (strip/swarm), missingno-style plots, correlation, clustermap, pairplot, regression (poly order 1–3 + CI and/or LOWESS, marginal rug/histogram/box/violin), heatmap (numeric columns with scaling/sorting/clustering), ridges, candlestick (OHLC per step), waterfall. Every chart downloads as PDF. Shared X / Y / Color / Facet-col / Facet-row / Size mapping, custom category order, high-cardinality warnings |
 | **Time Series** | Own data loader (date column + day-first/month-first) · resampling (hourly → yearly, mean/sum) and rolling smoothing · multi-variable mode · decomposition (statsmodels or Prophet) + ACF/PACF · Isolation-Forest anomaly detection · temporal profiles · calendar heatmaps · profile heatmaps · Prophet forecasting · Prophet changepoint analysis · linear/polynomial trend |
+| **Report** | Charts saved with ➕ Add to report: rename, annotate and reorder them, then export a static HTML dashboard or a PDF, publish it as a link served by the app, or send it to Python (`app.report()`) |
 | **About** | Built-in user manual with screenshots and example datasets |
 
 See [docs/FEATURES.md](docs/FEATURES.md) for a full walkthrough.
@@ -180,6 +181,39 @@ one (Colab, servers), download a copy once with
 camera icon in each chart's toolbar still saves PNG or SVG (choose the format in
 the sidebar under **📷 Chart export**).
 
+### Reports and dashboards
+
+Under every chart (Visualization and Time Series), **➕ Add to report** saves
+that chart as it is on screen. The **Report** page lists the saved charts: rename
+them, add a note, reorder or remove them, and choose a one- or two-column
+dashboard. Then:
+
+- **🌐 Build HTML**: one static page with interactive charts, which opens in
+  any browser and can be hosted anywhere. Embedding plotly.js (the default) adds
+  about 4.5 MB and works offline; without it the page loads plotly.js from the CDN.
+- **📄 Build PDF**: a contents page, then one page per chart with its title and
+  note, at the **PDF text and line size** chosen in the sidebar (paper, notebook,
+  talk, poster). Needs `pip install 'edalens[pdf]'` (kaleido and pypdf).
+- **🔗 Publish link**: serves the HTML page from the app itself at `?report=<id>`.
+  The link works while the app's server runs; download the HTML to keep it.
+  (Behind Colab's port proxy, a new tab may not be allowed in.)
+- **💾 Send to Python** (apps started with `edalens.walk(df)` or `edalens.show()`):
+  hands the report to the notebook or script:
+
+```python
+app = edalens.walk(df)
+# ... add charts in the app, then Report → 💾 Send to Python
+report = app.report()            # an edalens.Report; app.reports() lists every one sent
+report.save_html("eda.html")
+report.save_pdf("eda.pdf", context="talk")
+```
+
+`edalens.Report` also works on its own: `Report("Title").add(fig, note="...")`
+takes Plotly and matplotlib figures, and `report.save("r.json")` /
+`Report.load("r.json")` keep it for later. In browser mode
+(`mode="browser"`), Build HTML downloads through a plain link and the report
+cannot reach Python; PDF and Publish need the server mode.
+
 ### Try it with sample data
 
 Example CSVs live in
@@ -223,10 +257,13 @@ edalens/                  The pip package
     missing_data.py       Missing-value overview, drop / impute
     visualization.py      All general-purpose plots (~1.6k lines)
     time_series.py        Time series module (~1.2k lines)
+    report.py             Report page: saved charts, HTML/PDF export, published links
     about.py              In-app manual and examples
   utils/
     data_processing.py    Shared transformations, replay, and atomic undo/history updates
     plot_utils.py         Streamlit-free figure builders (regression, numeric heatmap)
+    export.py             PDF export of single charts, with paper/notebook/talk/poster contexts
+    report.py             edalens.Report: saved charts as HTML dashboards, PDF and JSON
 my_viz_plotly.py          Thin wrapper for `streamlit run` and Azure; runs edalens.app
 notebooks/                Colab and test notebooks
 .github/workflows/        Validation (tests and package checks on every push and PR)
