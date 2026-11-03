@@ -12,6 +12,8 @@ from plotly.colors import hex_to_rgb
 from plotly.subplots import make_subplots
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
+from edalens.utils.data_processing import parse_dates
+
 FIT_METHODS = ("Polynomial", "LOWESS")
 MARGINAL_KINDS = ("rug", "histogram", "box", "violin")
 DEFAULT_PALETTE = px.colors.qualitative.Set2
@@ -379,4 +381,126 @@ def numeric_heatmap_figure(
     obs_axis = "xaxis" if variables_on == "y" else "yaxis"
     if len(observations) > 60:
         fig.update_layout({obs_axis: dict(nticks=30)})
+    return fig
+
+
+CANDLE_SOURCES = ("One value column", "Open/High/Low/Close columns")
+INCREASING_COLOR = "#2ca02c"
+DECREASING_COLOR = "#d62728"
+TOTAL_COLOR = "#1f77b4"
+
+
+def ordered_steps(values: pd.Series, dayfirst: bool = True) -> pd.Series:
+    """Sort keys for the X steps of a candlestick or waterfall.
+
+    Categories keep their (custom) order, numbers and dates sort naturally, and
+    text that all parses as dates sorts by date; other text keeps its order of
+    first appearance. Returns the X values to plot (dates parsed), uniquely, in order.
+    """
+    if isinstance(values.dtype, pd.CategoricalDtype):
+        present = set(values.dropna())
+        return pd.Series([c for c in values.cat.categories if c in present], dtype=object)
+    values = values.dropna()
+    if pd.api.types.is_numeric_dtype(values) or pd.api.types.is_datetime64_any_dtype(values):
+        return pd.Series(np.sort(values.unique()))
+    dates = parse_dates(values, dayfirst)
+    if len(values) and dates.notna().all():
+        return pd.Series(np.sort(dates.unique()))
+    return pd.Series(values.unique(), dtype=object)
+
+
+def _step_keys(frame: pd.DataFrame, x: str, dayfirst: bool) -> tuple[pd.Series, pd.Series]:
+    """Per-row step key (dates parsed when the steps are dates) and the ordered steps."""
+    steps = ordered_steps(frame[x], dayfirst)
+    keys = frame[x]
+    if pd.api.types.is_datetime64_any_dtype(steps) and not pd.api.types.is_datetime64_any_dtype(keys):
+        keys = parse_dates(keys, dayfirst)
+    return keys, steps
+
+
+def ohlc_frame(
+    frame: pd.DataFrame,
+    x: str,
+    value: Optional[str] = None,
+    ohlc: Optional[Sequence[str]] = None,
+    dayfirst: bool = True,
+) -> pd.DataFrame:
+    """Open/high/low/close per X step, in step order.
+
+    With ``value``, each step's rows (in their original order) give
+    open = first, high = max, low = min, close = last. With ``ohlc`` (four column
+    names), the columns are used as they are; several rows per step are combined
+    the same way (first open, highest high, lowest low, last close).
+    """
+    if (value is None) == (ohlc is None):
+        raise ValueError("Pass either value or ohlc.")
+    keys, steps = _step_keys(frame, x, dayfirst)
+    if value is not None:
+        columns = dict(open=value, high=value, low=value, close=value)
+    else:
+        columns = dict(zip(("open", "high", "low", "close"), ohlc))
+    data = pd.DataFrame({name: frame[col] for name, col in columns.items()})
+    data["step"] = keys.to_numpy()
+    data = data.dropna()
+    grouped = data.groupby("step", sort=False, observed=True).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last")
+    )
+    return grouped.reindex(steps).dropna().rename_axis(x)
+
+
+def candlestick_figure(
+    ohlc: pd.DataFrame, title: str, y_label: str, range_slider: bool = False
+) -> go.Figure:
+    """Candlesticks from ``ohlc_frame`` output (index: steps)."""
+    fig = go.Figure(
+        go.Candlestick(
+            x=ohlc.index, open=ohlc["open"], high=ohlc["high"], low=ohlc["low"], close=ohlc["close"],
+            increasing_line_color=INCREASING_COLOR, decreasing_line_color=DECREASING_COLOR,
+            name=y_label,
+        )
+    )
+    fig.update_layout(
+        title=title, xaxis_title=ohlc.index.name, yaxis_title=y_label, height=550,
+        xaxis_rangeslider_visible=range_slider, showlegend=False,
+    )
+    if not pd.api.types.is_datetime64_any_dtype(ohlc.index) and not pd.api.types.is_numeric_dtype(ohlc.index):
+        fig.update_xaxes(type="category")
+    return fig
+
+
+def waterfall_frame(
+    frame: pd.DataFrame, x: str, y: str, aggregation: str = "Sum", dayfirst: bool = True
+) -> pd.Series:
+    """One change per X step (sum or mean of ``y``), in step order."""
+    keys, steps = _step_keys(frame, x, dayfirst)
+    data = pd.DataFrame({"step": keys.to_numpy(), "value": frame[y].to_numpy()}).dropna()
+    grouped = data.groupby("step", sort=False, observed=True)["value"]
+    changes = grouped.mean() if aggregation == "Mean" else grouped.sum()
+    return changes.reindex(steps).dropna().rename_axis(x)
+
+
+def waterfall_figure(
+    changes: pd.Series, title: str, y_label: str, total: bool = True, total_label: str = "Total"
+) -> go.Figure:
+    """A waterfall of ``changes`` (index: steps), with an optional final total bar."""
+    steps = [str(s.date()) if isinstance(s, pd.Timestamp) and s == s.normalize() else str(s) for s in changes.index]
+    values = changes.to_list()
+    measures = ["relative"] * len(values)
+    if total:
+        steps.append(total_label)
+        values.append(0)  # Plotly computes the total bar's height.
+        measures.append("total")
+    fig = go.Figure(
+        go.Waterfall(
+            x=steps, y=values, measure=measures, name=y_label,
+            text=[f"{v:+.4g}" for v in changes] + ([f"{changes.sum():.4g}"] if total else []),
+            textposition="outside",
+            increasing=dict(marker_color=INCREASING_COLOR), decreasing=dict(marker_color=DECREASING_COLOR),
+            totals=dict(marker_color=TOTAL_COLOR), connector=dict(line=dict(color="gray", width=1, dash="dot")),
+        )
+    )
+    fig.update_layout(
+        title=title, xaxis_title=changes.index.name, yaxis_title=y_label, height=550,
+        xaxis=dict(type="category"), showlegend=False,
+    )
     return fig

@@ -8,6 +8,7 @@ input. Failures raise ``OperationError`` and leave session state untouched.
 
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 import os
+import warnings
 from typing import Any
 
 import numpy as np
@@ -140,6 +141,30 @@ def _melt(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
     )
 
 
+# Year first (2023-01-05, 2023/1/5 12:00): the day/month order is never ambiguous.
+_YEAR_FIRST = r"^\s*\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\D|$)"
+
+
+def parse_dates(values: pd.Series, dayfirst: bool) -> pd.Series:
+    """Parse ``values`` as dates; unparseable values become NaT.
+
+    ``dayfirst`` only decides ambiguous dates such as 05/01/2023. Year-first
+    dates ignore it: pandas would otherwise read 2023-01-05 as 1 May
+    (format ``%Y-%d-%m``) and turn 2023-01-20 into NaT.
+    """
+    if ptypes.is_datetime64_any_dtype(values):
+        return values
+    text = values.dropna().astype(str)
+    with warnings.catch_warnings():  # "Could not infer format": text that is not dates.
+        warnings.simplefilter("ignore", UserWarning)
+        if len(text) and text.str.match(_YEAR_FIRST).mean() > 0.5:
+            parsed = pd.to_datetime(values, errors="coerce", format="ISO8601")
+            if parsed.notna().sum() < len(text):  # e.g. 2023/01/05: no single ISO form.
+                parsed = pd.to_datetime(values, errors="coerce", format="mixed", dayfirst=False)
+            return parsed
+        return pd.to_datetime(values, errors="coerce", dayfirst=dayfirst)
+
+
 def _date_features(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
     column = operation["date_column"]
     _require_columns(df, [column], "Date column")
@@ -150,7 +175,7 @@ def _date_features(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
             f"{', '.join(collisions)}. Remove or rename them first."
         )
     source = df[column]
-    parsed = pd.to_datetime(source, errors="coerce", dayfirst=operation["dayfirst"])
+    parsed = parse_dates(source, operation["dayfirst"])
     if len(df) and parsed.isna().all():
         raise OperationError(f"No values in column '{column}' could be parsed as dates.")
     result = df.copy()

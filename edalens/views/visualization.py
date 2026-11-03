@@ -10,14 +10,22 @@ import warnings
 import re
 from scipy.stats import t
 
+from edalens.utils.data_processing import parse_dates
+from edalens.utils.ui import plotly_chart, start_charts
 from edalens.utils.plot_utils import (
-    FIT_METHODS, HEATMAP_ROW_ORDERS, HEATMAP_SCALINGS, MARGINAL_KINDS,
-    numeric_heatmap_figure, regression_figure,
+    CANDLE_SOURCES, FIT_METHODS, HEATMAP_ROW_ORDERS, HEATMAP_SCALINGS, MARGINAL_KINDS,
+    candlestick_figure, numeric_heatmap_figure, ohlc_frame, regression_figure,
+    waterfall_figure, waterfall_frame,
 )
 
 warnings.filterwarnings('ignore')
 
+LINEPLOT_ROW_GAP_PX = 110
+# Plot types drawn with one panel per Facet Col / Facet Row value.
+FACET_PLOTS = ('bars', 'boxes', 'lineplot', 'histogram', 'density 1', 'density 2', 'scatter', 'catplot')
+
 def visualization():
+    start_charts()
     #st.subheader("🧪 Visualization: Interactive Data Exploration")
 
     # Check if filtered data exists in session state
@@ -49,7 +57,7 @@ def visualization():
     PLOT_TYPES = [
         'bars', 'boxes', 'lineplot', 'histogram', 'density 1', 'density 2',
         'scatter', 'catplot', 'missingno', 'correlation', 'clustermap',
-        'pairplot', 'regression', "heatmap", 'ridges'
+        'pairplot', 'regression', "heatmap", 'ridges', 'candlestick', 'waterfall'
     ]
 
     if not numeric_cols:
@@ -84,7 +92,7 @@ def visualization():
         second_num = numeric_cols[1] if len(numeric_cols) > 1 else first_num
 
         # Smart defaults and persistence depending on exact plot requirements
-        if new_plot in ["bars", "catplot", "lineplot"]:
+        if new_plot in ["bars", "catplot", "lineplot", "waterfall", "candlestick"]:
             if state["x"] not in categorical_cols: 
                 state["x"] = first_cat
             if new_plot == "bars": 
@@ -129,6 +137,17 @@ def visualization():
             if state["y"] not in categorical_cols: 
                 state["y"] = first_cat
 
+        # The X/Y dropdowns hold their own value (see mapping_zone); move them to the new defaults.
+        st.session_state["x_zone"] = state["x"]
+        st.session_state["y_zone"] = state["y"]
+
+    def mapping_zone(label, options, key, state_value):
+        # The widget keeps its value in session state; no `index`, which would come from
+        # viz_state (one run behind the widget) and could reset a fresh selection.
+        if st.session_state.get(key) not in options:
+            st.session_state[key] = state_value if state_value in options else options[0]
+        st.selectbox(label, options, key=key, label_visibility="collapsed")
+
     def check_cardinality(var_name):
         if var_name and var_name != "None" and var_name in categorical_cols:
             n_unique = data[var_name].nunique()
@@ -172,7 +191,7 @@ def visualization():
         y_opts = data.columns.tolist()
     else:
         # Smart X mapping based on standard statistical practices
-        if current_plot in ['bars', 'boxes', 'catplot', 'lineplot', 'heatmap']:
+        if current_plot in ['bars', 'boxes', 'catplot', 'lineplot', 'heatmap', 'waterfall', 'candlestick']:
             x_opts = categorical_cols.copy() if categorical_cols else data.columns.tolist()
         else:  # scatter, histogram, density 1/2, regression, ridges
             x_opts = numeric_cols.copy() if numeric_cols else data.columns.tolist()
@@ -236,40 +255,42 @@ def visualization():
         'pairplot': '🪟 pairplot',      # Represents a matrix grid of window panes
         'regression': '📉 regression', 
         "heatmap": '🔥 heatmap', 
-        'ridges': '🏔️ ridges'
+        'ridges': '🏔️ ridges',
+        'candlestick': '🕯️ candlestick',
+        'waterfall': '🪜 waterfall'
     }
 
 
     with z1:
-        plot_idx = PLOT_TYPES.index(st.session_state.viz_state["plot_type"]) if st.session_state.viz_state["plot_type"] in PLOT_TYPES else 0
+        if st.session_state._plot_type_selector not in PLOT_TYPES:
+            st.session_state._plot_type_selector = PLOT_TYPES[0]
         st.markdown("**Plot**")
         st.selectbox(
             "Plot", 
             PLOT_TYPES, 
             key="_plot_type_selector", 
             label_visibility="collapsed",
-            index=plot_idx, 
             on_change=handle_plot_change,
             format_func=lambda x: PLOT_ICONS.get(x, x)  # Shows icons without changing the actual value
         )
     with z2:
         st.markdown("**X**")
-        st.selectbox("X", x_opts, key="x_zone", label_visibility="collapsed", index=x_opts.index(s_x) if s_x in x_opts else 0)
+        mapping_zone("X", x_opts, "x_zone", s_x)
     with z3:
         st.markdown("**Y**")
-        st.selectbox("Y", y_opts, key="y_zone", label_visibility="collapsed", index=y_opts.index(s_y) if s_y in y_opts else 0)
+        mapping_zone("Y", y_opts, "y_zone", s_y)
     with z4:
         st.markdown("**Color (Hue)**")
-        st.selectbox("Color", cat_opts, key="color_zone", label_visibility="collapsed", index=cat_opts.index(s_color))
+        mapping_zone("Color", cat_opts, "color_zone", s_color)
     with z5:
         st.markdown("**Facet Col**")
-        st.selectbox("Facet Col", cat_opts, key="facet_col_zone", label_visibility="collapsed", index=cat_opts.index(s_facet_c))
+        mapping_zone("Facet Col", cat_opts, "facet_col_zone", s_facet_c)
     with z6:
         st.markdown("**Facet Row**")
-        st.selectbox("Facet Row", cat_opts, key="facet_row_zone", label_visibility="collapsed", index=cat_opts.index(s_facet_r))
+        mapping_zone("Facet Row", cat_opts, "facet_row_zone", s_facet_r)
     with z7:
         st.markdown("**Size**")
-        st.selectbox("Size", size_opts, key="size_zone", label_visibility="collapsed", index=size_opts.index(s_size))
+        mapping_zone("Size", size_opts, "size_zone", s_size)
 
     # Synchronize state on change
     st.session_state.viz_state["x"] = st.session_state.x_zone
@@ -291,6 +312,9 @@ def visualization():
     global_facet_col = st.session_state.facet_col_zone if st.session_state.facet_col_zone != "None" else None
     global_facet_row = st.session_state.facet_row_zone if st.session_state.facet_row_zone != "None" else None
     global_size = st.session_state.size_zone if st.session_state.size_zone != "None" else None
+    # Candlestick and waterfall name every unused mapping themselves.
+    if plot_type not in FACET_PLOTS + ("candlestick", "waterfall") and (global_facet_col or global_facet_row):
+        st.info(f"ℹ️ The {plot_type} plot does not use Facet Col or Facet Row.")
     
     PALETTE = px.colors.qualitative.Set2
 
@@ -309,7 +333,7 @@ def visualization():
             corr_matrix = data_c.select_dtypes(include=np.number).corr()
             fig = px.imshow(corr_matrix, text_auto=True, color_continuous_scale='Viridis', 
                            title="Correlation Matrix", width=800, height=600)
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
 
         elif plot_type == "clustermap":
             with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
@@ -354,7 +378,7 @@ def visualization():
                 yaxis=dict(showticklabels=True),
                 showlegend=False
             )
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
 
         elif plot_type == "pairplot":
             numeric_cols_list = list(data.select_dtypes(include='number').columns)
@@ -451,7 +475,7 @@ def visualization():
                     fig.update_xaxes(range=x_range, row=i+1, col=j+1)
                     fig.update_yaxes(range=y_range, row=i+1, col=j+1)
 
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
 
         elif plot_type == "missingno":
             with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
@@ -470,7 +494,7 @@ def visualization():
                     color_continuous_scale="viridis", range_color=[0, 1], aspect='auto', width=1000, height=600
                 )
                 fig.update_layout(title="Missing Data Matrix (1 = Present, 0 = Missing)")
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
             elif tplot == "bars":
                 mapped_data = data.notnull().astype(int)
@@ -493,7 +517,7 @@ def visualization():
                 )
                 fig.update_traces(textposition='outside')
                 fig.update_layout(xaxis_title="Variables", yaxis_title="Count of Non-Missing Values", margin=dict(l=80, r=20, t=50, b=150), xaxis_tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
             elif tplot == "heatmap":
                 from scipy.spatial.distance import squareform
@@ -525,7 +549,7 @@ def visualization():
                     zmin=0, zmax=1, title="Lower Triangular Missingness Correlation Clustermap", width=800, height=800
                 )
                 fig.update_layout(xaxis_title="Variables", yaxis_title="Variables", xaxis_side="bottom", yaxis_autorange="reversed")
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
             elif tplot == "dendrogram":
                 import plotly.figure_factory as ff
@@ -572,7 +596,7 @@ def visualization():
                     yaxis=dict(domain=[0, 0.7], tickmode='array', tickvals=list(range(len(ordered_columns))), ticktext=ordered_columns[::-1], autorange='reversed'),
                     xaxis2=dict(domain=[0, 0.2]), yaxis2=dict(domain=[0.7, 1]), margin=dict(l=100, t=50, b=100)
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
         # Interactive plot types
         else:
@@ -712,7 +736,7 @@ def visualization():
                         st.warning("You must select both X and Hue variables to create a heatmap.")
                         return
 
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
             elif plot_type == 'boxes':
                 var_x_used = global_var_x
@@ -898,7 +922,7 @@ def visualization():
                             ys = trace.y if orientation == 'v' else trace.x
                             if ys is not None and len(ys) > 0: trace.update(spanmode='manual', span=[min(ys), max(ys)])
 
-                st.plotly_chart(fig, use_container_width=(not single_var))
+                plotly_chart(fig, use_container_width=(not single_var))
 
             elif plot_type == 'lineplot':
                 var_x = global_var_x
@@ -938,8 +962,11 @@ def visualization():
                 n_cols = len(facet_col_vals) if facet_col_used else 1
                 n_rows = len(facet_row_vals) if facet_row_used else 1
 
+                panel_height = 400
                 fig = make_subplots(
-                    rows=n_rows, cols=n_cols, shared_yaxes=True, shared_xaxes=True, horizontal_spacing=0.1, vertical_spacing=0.12,
+                    rows=n_rows, cols=n_cols, shared_yaxes=True, shared_xaxes=True, horizontal_spacing=0.1,
+                    # A fixed pixel gap leaves room for each row's x-axis title above the next row's facet title.
+                    vertical_spacing=min(LINEPLOT_ROW_GAP_PX / (panel_height * n_rows), 0.9 / max(1, n_rows - 1)),
                     subplot_titles=[
                         f"{facet_row_used}: {r} | {facet_col_used}: {c}" if facet_row_used and facet_col_used else
                         f"{facet_col_used}: {c}" if facet_col_used else f"{facet_row_used}: {r}" if facet_row_used else ""
@@ -1004,14 +1031,15 @@ def visualization():
                             else:
                                 group_cols = list(dict.fromkeys([col for col in [var_x, hue_used, facet_col_used, facet_row_used] if col is not None and col != var_x]))
                                 group_cols = [var_x] + group_cols
-                                grouped = plot_data.groupby(group_cols)[var_y].agg(['mean', 'std', 'count', 'sum']).reset_index()
+                                grouped = plot_data.groupby(group_cols, observed=True)[var_y].agg(['mean', 'std', 'count', 'sum']).reset_index()
 
-                                sub = grouped.copy()
+                                # Categorical groupings list unobserved combinations with a count of 0.
+                                sub = grouped[grouped['count'] > 0].copy()
                                 if hue_used and hue_used != var_x: sub = sub[sub[hue_used] == hue_val]
                                 if facet_row_used: sub = sub[sub[facet_row_used] == row_val]
                                 if facet_col_used: sub = sub[sub[facet_col_used] == col_val]
 
-                                if sub.empty or sub['count'].iloc[0] < 2: continue
+                                if sub.empty: continue
 
                                 sub['se'] = sub['std'] / np.sqrt(sub['count'])
                                 sub['ci_lower'], sub['ci_upper'] = t.interval(ci_level_value, sub['count'] - 1, loc=sub['mean'], scale=sub['se'])
@@ -1030,13 +1058,13 @@ def visualization():
 
                             fig.add_trace(go.Scatter(**scatter_kwargs), row=row_idx, col=col_idx)
 
-                fig.update_layout(width=1000, height=400 * n_rows, title=f"{'Time Series ' if time_series else ''}Lineplot: {aggregation_method} of {var_y} vs {var_x}", showlegend=True, legend_title=hue_used)
+                fig.update_layout(width=1000, height=panel_height * n_rows + 80, margin=dict(b=80), title=f"{'Time Series ' if time_series else ''}Lineplot: {aggregation_method} of {var_y} vs {var_x}", showlegend=True, legend_title=hue_used)
                 if facet_row_used or facet_col_used:
                     for i in range(1, n_rows + 1):
                         for j in range(1, n_cols + 1):
                             fig.update_xaxes(title_text=var_x, row=i, col=j, showticklabels=True)
                             fig.update_yaxes(title_text=f"{aggregation_method} of {var_y}", row=i, col=j, showticklabels=True)
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
             elif plot_type == 'ridges':
                 var_x = global_var_x
@@ -1121,7 +1149,7 @@ def visualization():
 
                     fig.update_layout(title=f"Ridge Plot Faceted by {var_y}", width=900, height=max(300, n_rows * height), showlegend=True)
                     fig.update_xaxes(title=var_x, row=n_rows, col=1)
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
             elif plot_type == 'histogram':
                 var_x = global_var_x
@@ -1160,7 +1188,7 @@ def visualization():
                         barmode=barmode, histnorm=stat if stat != "count" else None, cumulative=cumulative,
                         category_orders=category_orders, color_discrete_sequence=PALETTE, width=800, height=600
                     )
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
             elif plot_type in ["density 1", "density 2"]:
                 var_x = global_var_x
@@ -1284,13 +1312,14 @@ def visualization():
                             except Exception: continue
 
                     fig.update_layout(title=f"Density Plot of {var_x}", width=900, height=300 * max(n_rows, 1), showlegend=True)
-                    st.plotly_chart(fig, use_container_width=True)
+                    plotly_chart(fig, use_container_width=True)
 
                 else:
                     if kind == "hist":
                         fig = px.density_heatmap(
                             plot_data, x=var_x, y=var_y, facet_col=facet_col if facet_col != 'None' else None, facet_row=facet_row if facet_row != 'None' else None,
-                            color_continuous_scale='Viridis', histnorm='probability density' if not common_norm else None,
+                            # A list, not 'Viridis': px builds the rug's colour from the scale and fails on the name.
+                            color_continuous_scale=px.colors.sequential.Viridis, histnorm='probability density' if not common_norm else None,
                             marginal_x='rug' if rug else None, marginal_y='rug' if rug else None, width=800, height=600, category_orders=category_orders
                         )
                     else:
@@ -1348,7 +1377,7 @@ def visualization():
                                         )
                                     fig.add_trace(trace)
 
-                    st.plotly_chart(fig, use_container_width=True)
+                    plotly_chart(fig, use_container_width=True)
 
 
             elif plot_type == 'scatter':
@@ -1437,7 +1466,7 @@ def visualization():
                     fig.update_layout(scene=dict(xaxis_title=var_x, yaxis_title=var_y, zaxis_title=var_z), margin=dict(l=0, r=0, t=40, b=0))
                 else:
                     fig = px.scatter(**scatter_kwargs)
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
             elif plot_type == 'catplot':
                 var_x = global_var_x
@@ -1516,7 +1545,7 @@ def visualization():
                     else: fig.update_traces(marker=dict(size=global_point_size))
                     if kind == "swarm": fig.update_traces(jitter=0.3)
 
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
             elif plot_type == 'regression':
                 var_x = global_var_x
@@ -1553,7 +1582,54 @@ def visualization():
                 except ValueError as exc:
                     st.warning(str(exc))
                     return
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
+
+            elif plot_type in ('candlestick', 'waterfall'):
+                var_x = global_var_x
+                var_y = global_var_y
+                unused = [name for name, used in (("Color", global_hue), ("Facet Col", global_facet_col), ("Facet Row", global_facet_row), ("Size", global_size)) if used]
+                if unused:
+                    st.info(f"ℹ️ {plot_type.capitalize()} plots do not use {', '.join(unused)}.")
+                plot_data = data.copy()
+
+                with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
+                    dayfirst = st.checkbox("Day First when X holds dates (e.g., 31/12/2023)", value=True)
+                    x_values = plot_data[var_x].dropna()
+                    # Dates are plotted in date order; other text gets a custom order.
+                    if x_values.dtype.name in ['object', 'category'] and not parse_dates(x_values, dayfirst).notna().all():
+                        values = x_values.unique().tolist()
+                        c_order = st.multiselect(f"Custom Order for x: {var_x}", options=values, default=values)
+                        plot_data[var_x] = pd.Categorical(plot_data[var_x], categories=c_order, ordered=True)
+                    if plot_type == 'candlestick':
+                        source = st.radio("Candles from", CANDLE_SOURCES, index=0,
+                                          help="One value column: each X step's first, highest, lowest and last value. "
+                                               "Or pick existing Open/High/Low/Close columns.")
+                        ohlc_cols = None
+                        if source == CANDLE_SOURCES[1]:
+                            ohlc_cols = []
+                            for name in ("Open", "High", "Low", "Close"):
+                                guess = next((c for c in numeric_cols if c.lower() == name.lower()), var_y)
+                                ohlc_cols.append(st.selectbox(name, numeric_cols, index=numeric_cols.index(guess) if guess in numeric_cols else 0))
+                        range_slider = st.checkbox("Range Slider", value=False)
+                    else:
+                        aggregation_method = st.selectbox("Change per X step", ["Sum", "Mean"], index=0)
+                        show_total = st.checkbox("Show Total Bar", value=True)
+
+                try:
+                    if plot_type == 'candlestick':
+                        ohlc = ohlc_frame(plot_data, var_x, value=None if ohlc_cols else var_y, ohlc=ohlc_cols, dayfirst=dayfirst)
+                        y_label = var_y if not ohlc_cols else ", ".join(dict.fromkeys(ohlc_cols))
+                        fig = candlestick_figure(ohlc, f"Candlestick of {y_label} by {var_x}", y_label, range_slider)
+                    else:
+                        changes = waterfall_frame(plot_data, var_x, var_y, aggregation_method, dayfirst)
+                        fig = waterfall_figure(changes, f"Waterfall: {aggregation_method} of {var_y} by {var_x}", var_y, show_total)
+                except (KeyError, TypeError, ValueError) as exc:
+                    st.warning(f"Could not build the {plot_type} plot: {exc}")
+                    return
+                if fig.data[0].x is None or not len(fig.data[0].x):
+                    st.warning(f"No data to plot: {var_x} and {var_y} have no complete rows.")
+                    return
+                plotly_chart(fig, use_container_width=True)
 
             elif plot_type == 'heatmap':
                 cat_var = global_var_x if global_var_x != 'None' else None
@@ -1590,7 +1666,7 @@ def visualization():
                     except ValueError as exc:
                         st.warning(str(exc))
                         return
-                    st.plotly_chart(fig, use_container_width=True)
+                    plotly_chart(fig, use_container_width=True)
                     return
 
                 if num_var is None or not pd.api.types.is_numeric_dtype(plot_data[num_var]):
@@ -1613,7 +1689,7 @@ def visualization():
 
                 fig = px.imshow(heatmap_data, labels=dict(x="Observations", y=cat_var, color="Value"), x=x_labels, y=y_labels, color_continuous_scale=colormap, title=title, width=800, height=height, aspect='auto')
                 fig.update_layout(margin=dict(l=50, r=50, t=100, b=50), yaxis=dict(tickfont=dict(size=10)))
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
 
     if not data.empty:
         render_plot()

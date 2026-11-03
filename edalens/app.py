@@ -1,7 +1,7 @@
 import streamlit as st
 
 from edalens.utils.data_processing import load_preset_data
-from edalens.utils.ui import sidebar_menu
+from edalens.utils.ui import export_settings, sidebar_menu
 
 def main():
     st.set_page_config(layout="wide", page_title="EDALens App", page_icon="🚀")
@@ -11,6 +11,8 @@ def main():
         selected = sidebar_menu(
             "EDALens", pages, icons=["house", "gear", "bar-chart", "clock", "info-circle"], menu_icon="cast"
         )
+        if selected in ("Visualization", "Time Series"):
+            export_settings()
     
     if selected == "Load data":
         from edalens.views.home import home

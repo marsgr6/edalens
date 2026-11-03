@@ -71,3 +71,36 @@ def test_forecasting_section_runs_statsmodels_models(monkeypatch, model):
     assert not app.exception
     assert not app.warning, [w.value for w in app.warning]
     assert any("observations" in caption.value for caption in app.caption)
+
+
+def test_loader_reads_iso_dates_with_day_first_selected(monkeypatch):
+    import requests
+
+    dates = pd.date_range("2020-01-01", periods=40, freq="D")
+    csv = (
+        pd.DataFrame({"date": dates.strftime("%Y-%m-%d"), "v": range(40)})
+        .to_csv(index=False)
+        .encode()
+    )
+
+    class Response:
+        content = csv
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(sys, "platform", "emscripten")
+    app = AppTest.from_function(time_series_page, default_timeout=30)
+    app.run()
+    next(r for r in app.radio if r.label == "Select data source").set_value(
+        "GitHub Link"
+    )
+    app.run()
+    app.text_input[0].set_value("https://example.com/v.csv")
+    app.run()
+    assert next(
+        r for r in app.radio if r.label == "Select date format"
+    ).value.startswith("DD/MM")
+    assert not app.exception and not app.warning, [w.value for w in app.warning]
+    assert app.session_state["df"].index.equals(pd.DatetimeIndex(dates, name="date"))

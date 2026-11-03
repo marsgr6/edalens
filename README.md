@@ -34,7 +34,7 @@ edalens.show()                      # the app in its own browser tab
 |---|---|
 | **Home** | Upload a CSV or load one from GitHub · keep/drop columns · set numeric vs categorical types · random subsample · melt (wide → long) · extract date features (Year, Month, Day, DayOfWeek, Hour) · optional undo history · download the processed CSV |
 | **Missing Data Imputation** | Per-column missing counts/percentages · drop rows with any NaN · impute (KNN for numeric, mode for categorical) |
-| **Visualization** | 15 plot types: bars, boxes (box/violin), lineplot, histogram, density 1 (1-D KDE), density 2 (2-D hist/KDE), scatter (2-D or 3-D), catplot (strip/swarm), missingno-style plots, correlation, clustermap, pairplot, regression (poly order 1–3 + CI and/or LOWESS, marginal rug/histogram/box/violin), heatmap (numeric columns with scaling/sorting/clustering), ridges. Shared X / Y / Color / Facet-col / Facet-row / Size mapping, custom category order, high-cardinality warnings |
+| **Visualization** | 17 plot types: bars, boxes (box/violin), lineplot, histogram, density 1 (1-D KDE), density 2 (2-D hist/KDE), scatter (2-D or 3-D), catplot (strip/swarm), missingno-style plots, correlation, clustermap, pairplot, regression (poly order 1–3 + CI and/or LOWESS, marginal rug/histogram/box/violin), heatmap (numeric columns with scaling/sorting/clustering), ridges, candlestick (OHLC per step), waterfall. Every chart downloads as PDF. Shared X / Y / Color / Facet-col / Facet-row / Size mapping, custom category order, high-cardinality warnings |
 | **Time Series** | Own data loader (date column + day-first/month-first) · resampling (hourly → yearly, mean/sum) and rolling smoothing · multi-variable mode · decomposition (statsmodels or Prophet) + ACF/PACF · Isolation-Forest anomaly detection · temporal profiles · calendar heatmaps · profile heatmaps · Prophet forecasting · Prophet changepoint analysis · linear/polynomial trend |
 | **About** | Built-in user manual with screenshots and example datasets |
 
@@ -164,6 +164,21 @@ through [localtunnel](https://github.com/localtunnel/localtunnel) (Node.js
 is preinstalled in Colab). On the first visit localtunnel asks for a *tunnel
 password*: it's the runtime's public IP, which `run_colab()` prints. Anyone
 with the link and password can use the app while it runs.
+
+### PDF export
+
+Each chart has a **📄 Prepare PDF** button that renders it with
+[kaleido](https://github.com/plotly/Kaleido). Install it with the app:
+
+```bash
+pip install 'edalens[pdf]'
+```
+
+kaleido 1.x drives an installed Google Chrome or Chromium. On a machine without
+one (Colab, servers), download a copy once with
+`python -c "import kaleido; kaleido.get_chrome_sync()"`. Without kaleido, the
+camera icon in each chart's toolbar still saves PNG or SVG (choose the format in
+the sidebar under **📷 Chart export**).
 
 ### Try it with sample data
 

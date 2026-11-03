@@ -26,7 +26,8 @@ import matplotlib.pyplot as plt
 import requests
 import io
 from edalens.utils import forecasting
-from edalens.utils.ui import sidebar_menu
+from edalens.utils.data_processing import parse_dates
+from edalens.utils.ui import plotly_chart, pyplot, sidebar_menu, start_charts
 
 
 def _frequency_aliases():
@@ -89,7 +90,7 @@ def _statsmodels_forecasting(df, variables, method, time_granularity, aggregatio
                 continue
             anomalies = forecasting.residual_anomalies(result, contamination) if flag else None
             title = f"{method} forecast for {col} ({aggregation_method if time_granularity != 'None' else 'Raw'})"
-            st.plotly_chart(
+            plotly_chart(
                 forecasting.forecast_figure(result, title, col, ci_level, anomalies), use_container_width=True
             )
             season_note = f"season of {season} steps" if season else "no seasonality (fewer than two full seasons)"
@@ -98,6 +99,7 @@ def _statsmodels_forecasting(df, variables, method, time_granularity, aggregatio
 
 
 def time_series_analysis():
+    start_charts()
     #st.subheader("📈 Time Series Analysis & Anomaly Detection")
 
     with st.sidebar:
@@ -164,10 +166,14 @@ def time_series_analysis():
             dayfirst = date_format == "DD/MM/YYYY (Day First)"
 
             try:
-                df[date_col] = pd.to_datetime(df[date_col], dayfirst=dayfirst, errors='coerce')
+                raw_dates = df[date_col]
+                df[date_col] = parse_dates(raw_dates, dayfirst)
                 invalid_dates = df[date_col].isna().sum()
                 if invalid_dates > 0:
                     st.warning(f"⚠️ {invalid_dates} rows could not be parsed as dates and will be removed.")
+                    if parse_dates(raw_dates, not dayfirst).isna().sum() < invalid_dates:
+                        other = "MM/DD/YYYY (Month First)" if dayfirst else "DD/MM/YYYY (Day First)"
+                        st.info(f"ℹ️ More dates parse with **{other}**; the dates may be in that order.")
                 df = df.dropna(subset=[date_col])
                 if df.empty:
                     st.error("❌ No valid dates remain after parsing.")
@@ -316,7 +322,7 @@ def time_series_analysis():
             else:
                 fig.update_yaxes(matches=None)
 
-        st.plotly_chart(fig, use_container_width=True)
+        plotly_chart(fig, use_container_width=True)
 
     elif analysis_section == "Decomposition & ACF/PACF":
         st.subheader("📉 Seasonal Decomposition")
@@ -332,7 +338,7 @@ def time_series_analysis():
             try:
                 result = seasonal_decompose(df[selected_col], model='additive', period=window_dec)
                 fig = result.plot()
-                st.pyplot(fig)
+                pyplot(fig)
             except Exception as e:
                 st.warning(f"Decomposition failed: {e}")
         else:
@@ -349,7 +355,7 @@ def time_series_analysis():
                 if 'weekly' in forecast: fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['weekly'], mode='lines'), row=3, col=1)
                 if 'daily' in forecast: fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['daily'], mode='lines'), row=4, col=1)
                 fig.update_layout(height=800, title_text=f"Prophet Decomposition of {selected_col}")
-                st.plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig, use_container_width=True)
             except Exception as e:
                 st.error(f"Prophet failed: {e}")
 
@@ -357,7 +363,7 @@ def time_series_analysis():
         fig_acf, ax = plt.subplots(1, 2, figsize=(12, 4))
         plot_acf(df[selected_col].dropna(), ax=ax[0])
         plot_pacf(df[selected_col].dropna(), ax=ax[1])
-        st.pyplot(fig_acf)
+        pyplot(fig_acf)
 
     elif analysis_section == "Anomaly Detection":
         st.subheader("🚨 Anomaly Detection (Isolation Forest)")
@@ -378,7 +384,7 @@ def time_series_analysis():
                     fig.add_trace(go.Scatter(x=anom.index, y=anom['value'], mode='markers', marker=dict(color='red', size=8)), row=i, col=1)
             if same_y: fig.update_yaxes(matches='y')
             fig.update_layout(height=300*rows, title="Anomaly Detection (Multi-Variable)")
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
         else:
             df_anom = df_summary[[selected_col]].dropna().rename(columns={selected_col: 'value'})
             df_anom['anomaly'] = IsolationForest(contamination=contamination, random_state=42).fit_predict(df_anom[['value']])
@@ -388,7 +394,7 @@ def time_series_analysis():
             fig.add_trace(go.Scatter(x=df_anom[df_anom['anomaly']==1].index, y=df_anom[df_anom['anomaly']==1]['value'],
                                      mode='markers', marker=dict(color='red', size=8)))
             fig.update_layout(title=f"Anomaly Detection - {selected_col}")
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
 
     elif analysis_section == "Temporal Profiles":
         # Unchanged (single-var)
@@ -416,7 +422,7 @@ def time_series_analysis():
 
         if plot_type == "Boxplot":
             fig = px.box(df_profile, x='profile', y=selected_col, title=f"Boxplot by {profile_unit}")
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
         else:
             agg_func = profile_agg_method.lower()
             profile_summary = df_profile.groupby('profile')[selected_col].agg([agg_func, 'std'])
@@ -434,7 +440,7 @@ def time_series_analysis():
                 xaxis_title=profile_unit,
                 yaxis_title=selected_col
             )
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
 
     elif analysis_section == "Calendar Heatmap":
 
@@ -515,7 +521,7 @@ def time_series_analysis():
 
             fig.update_layout(height=850)
 
-        st.plotly_chart(fig, use_container_width=True)
+        plotly_chart(fig, use_container_width=True)
 
     elif analysis_section == "Heatmap Profiles":
         # Unchanged (single-var)
@@ -631,7 +637,7 @@ def time_series_analysis():
                 coloraxis_colorbar=dict(title=selected_col, thickness=20, len=0.8, x=1., y=0.5, yanchor="middle", tickformat=".2f", ticks="outside")
             )
 
-        st.plotly_chart(fig, use_container_width=True)
+        plotly_chart(fig, use_container_width=True)
 
     elif analysis_section == "Forecasting":
         st.subheader(f"📈 Forecasting")
@@ -695,7 +701,7 @@ def time_series_analysis():
                         yaxis_title=col,
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    plotly_chart(fig, use_container_width=True)
         else:
             # Original single-var forecasting code
             df_prophet = df[[selected_col]].reset_index()
@@ -743,7 +749,7 @@ def time_series_analysis():
                 yaxis_title=selected_col,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
 
     # ============================================================
     # CHANGEPOINT ANALYSIS WITH PROPHET
@@ -965,7 +971,7 @@ def time_series_analysis():
             )
 
 
-            st.plotly_chart(
+            plotly_chart(
                 fig,
                 use_container_width=True
             )
@@ -1277,7 +1283,7 @@ def time_series_analysis():
                 fig.update_yaxes(matches='y')
             fig.update_layout(height=300 * rows,
                               title_text=f"Trend Analysis – Multi Variable ({aggregation_method if resample_freq else 'Raw'})")
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
         else:
             # Original single-var trend code
             df_trend = df_summary[[selected_col]].copy()
@@ -1310,6 +1316,6 @@ def time_series_analysis():
                 yaxis_title=selected_col,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
-            st.plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig, use_container_width=True)
 
     # (All other sections you had are fully preserved above)
