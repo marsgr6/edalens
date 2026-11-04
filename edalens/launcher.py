@@ -76,6 +76,10 @@ def port_is_free(port: int) -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             if os.name == "nt":
                 probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:
+                # Bind like Streamlit (Tornado) does: connections a stopped server left
+                # in TIME_WAIT do not block it, while a live listener still does.
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 probe.bind((address, port))
             except OSError:
