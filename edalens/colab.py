@@ -60,7 +60,9 @@ def install_requirements(force: bool = False, marker: Path = _INSTALL_MARKER) ->
     requirements = requirements_file()
     if requirements is None or (marker.exists() and not force):
         return False
-    print("Installing EDALens requirements (first run only, 1-3 minutes)...", flush=True)
+    print(
+        "Installing EDALens requirements (first run only, 1-3 minutes)...", flush=True
+    )
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", "-q", "-r", str(requirements)],
         capture_output=True,
@@ -95,7 +97,13 @@ def tunnel_password(url: str = PASSWORD_URL, timeout: float = 10.0) -> Optional[
 class ColabApp:
     """An EDALens server plus the localtunnel process that exposes it."""
 
-    def __init__(self, server: EDALensServer, tunnel: subprocess.Popen, public_root: str, password: Optional[str]):
+    def __init__(
+        self,
+        server: EDALensServer,
+        tunnel: subprocess.Popen,
+        public_root: str,
+        password: Optional[str],
+    ):
         self.server = server
         self.tunnel = tunnel
         self.password = password
@@ -173,7 +181,9 @@ def _open_tunnel(port: int, timeout: float) -> tuple[subprocess.Popen, str]:
     if process.poll() is None:
         process.terminate()
     tail = "".join(output[-20:]).strip()
-    raise LaunchError(f"localtunnel did not report a public URL within {timeout:g} s.\n{tail}".rstrip())
+    raise LaunchError(
+        f"localtunnel did not report a public URL within {timeout:g} s.\n{tail}".rstrip()
+    )
 
 
 def run_colab(

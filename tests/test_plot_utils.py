@@ -43,11 +43,16 @@ def traces(fig, kind=None, name_prefix=None):
 
 def test_polynomial_fit_band_contains_the_fit():
     frame = sample_frame()
-    fit = polynomial_fit(frame["x"].to_numpy(), frame["y"].to_numpy(), order=3, ci_level=95)
+    fit = polynomial_fit(
+        frame["x"].to_numpy(), frame["y"].to_numpy(), order=3, ci_level=95
+    )
     assert list(fit.columns) == ["x", "fit", "lower", "upper"]
     assert (fit["lower"] <= fit["fit"]).all() and (fit["fit"] <= fit["upper"]).all()
     # Too few distinct x values for the order.
-    assert polynomial_fit(np.array([1.0, 1.0, 2.0]), np.array([1.0, 2.0, 3.0]), 2, 95) is None
+    assert (
+        polynomial_fit(np.array([1.0, 1.0, 2.0]), np.array([1.0, 2.0, 3.0]), 2, 95)
+        is None
+    )
 
 
 def test_lowess_follows_a_nonlinear_signal_better_than_a_line():
@@ -78,7 +83,9 @@ def test_lowess_only_and_both_methods_per_hue_group():
     assert len(traces(only, name_prefix="LOWESS")) == 1
     assert not any(trace.fill == "toself" for trace in only.data)
 
-    both = regression_figure(frame, "x", "y", hue="group", methods=["Polynomial", "LOWESS"], order=2)
+    both = regression_figure(
+        frame, "x", "y", hue="group", methods=["Polynomial", "LOWESS"], order=2
+    )
     assert len(traces(both, name_prefix="LOWESS")) == 2
     assert len(traces(both, name_prefix="Poly (order 2)")) == 2
     assert {trace.line.dash for trace in traces(both, name_prefix="LOWESS")} == {"dash"}
@@ -86,10 +93,23 @@ def test_lowess_only_and_both_methods_per_hue_group():
 
 @pytest.mark.parametrize("kind", MARGINAL_KINDS)
 def test_marginals_are_added_per_group_on_both_axes(kind):
-    fig = regression_figure(sample_frame(), "x", "y", hue="group", marginal_x=kind, marginal_y=kind)
-    expected = {"rug": "scatter", "histogram": "histogram", "box": "box", "violin": "violin"}[kind]
+    fig = regression_figure(
+        sample_frame(), "x", "y", hue="group", marginal_x=kind, marginal_y=kind
+    )
+    expected = {
+        "rug": "scatter",
+        "histogram": "histogram",
+        "box": "box",
+        "violin": "violin",
+    }[kind]
     # Marginals are hidden from the legend; two groups x two axes.
-    marginal = [t for t in fig.data if t.type == expected and t.showlegend is False and getattr(t, "fill", None) != "toself"]
+    marginal = [
+        t
+        for t in fig.data
+        if t.type == expected
+        and t.showlegend is False
+        and getattr(t, "fill", None) != "toself"
+    ]
     assert len(marginal) == 4
     main = traces(fig, "scatter", "a")[0]
 
@@ -99,7 +119,9 @@ def test_marginals_are_added_per_group_on_both_axes(kind):
         return axis_id == other_id or axis.matches == other_id
 
     top = [t for t in marginal if linked(t.xaxis, main.xaxis) and t.yaxis != main.yaxis]
-    right = [t for t in marginal if linked(t.yaxis, main.yaxis) and t.xaxis != main.xaxis]
+    right = [
+        t for t in marginal if linked(t.yaxis, main.yaxis) and t.xaxis != main.xaxis
+    ]
     assert len(top) == 2 and len(right) == 2
 
 
@@ -123,14 +145,18 @@ def test_box_and_violin_marginals_get_more_room_than_rug_and_grow_with_groups():
     rug = regression_figure(frame, "x", "y", marginal_x="rug", marginal_y="rug")
     for kind in ("box", "violin"):
         one = regression_figure(frame, "x", "y", marginal_x=kind, marginal_y=kind)
-        three = regression_figure(frame, "x", "y", hue="three", marginal_x=kind, marginal_y=kind)
+        three = regression_figure(
+            frame, "x", "y", hue="three", marginal_x=kind, marginal_y=kind
+        )
         assert top_share(rug) < top_share(one) < top_share(three)
         assert one.layout.height < three.layout.height
         assert right_share(rug) < right_share(one) <= right_share(three) < 0.35
 
 
 def test_box_and_violin_marginals_show_outliers_as_jittered_points():
-    fig = regression_figure(sample_frame(), "x", "y", marginal_x="box", marginal_y="violin")
+    fig = regression_figure(
+        sample_frame(), "x", "y", marginal_x="box", marginal_y="violin"
+    )
     box = traces(fig, "box")[0]
     violin = traces(fig, "violin")[0]
     assert box.boxpoints == "outliers" and violin.points == "outliers"
@@ -171,15 +197,24 @@ def test_regression_page_renders_lowess_with_marginals():
     app.session_state["current_numeric_cols"] = ["x", "y"]
     app.session_state["current_categorical_cols"] = ["group", "label"]
     app.session_state["viz_state"] = {
-        "plot_type": "regression", "x": "x", "y": "y", "color": "None",
-        "facet_col": "None", "facet_row": "None", "size": "None",
+        "plot_type": "regression",
+        "x": "x",
+        "y": "y",
+        "color": "None",
+        "facet_col": "None",
+        "facet_row": "None",
+        "size": "None",
     }
     app.session_state["_plot_type_selector"] = "regression"
     app.run()
     assert not app.exception
 
-    next(w for w in app.multiselect if w.label == "Fit Methods").set_value(["Polynomial", "LOWESS"])
-    next(w for w in app.selectbox if w.label == "Marginal Plot for X").set_value("violin")
+    next(w for w in app.multiselect if w.label == "Fit Methods").set_value(
+        ["Polynomial", "LOWESS"]
+    )
+    next(w for w in app.selectbox if w.label == "Marginal Plot for X").set_value(
+        "violin"
+    )
     app.run()
     assert not app.exception
     assert any(s.label.startswith("LOWESS Fraction") for s in app.slider)
@@ -200,7 +235,8 @@ def marginal_axes(app: AppTest) -> dict:
     """Count marginal traces (hidden from the legend, not CI bands) by trace type."""
     spec = json.loads(app.get("plotly_chart")[-1].proto.spec)
     marginal = [
-        t["type"] for t in spec["data"]
+        t["type"]
+        for t in spec["data"]
         if t.get("showlegend") is False and t.get("fill") != "toself"
     ]
     return dict(Counter(marginal))
@@ -227,11 +263,16 @@ def heatmap_frame() -> pd.DataFrame:
 def test_scale_columns_per_column_with_constant_and_missing_values():
     frame = heatmap_frame()[["temp", "pressure", "rain", "const"]]
     z = scale_columns(frame, "Z-score")
-    assert np.allclose(z[["temp", "pressure"]].mean(), 0) and np.allclose(z[["temp", "pressure"]].std(ddof=0), 1)
+    assert np.allclose(z[["temp", "pressure"]].mean(), 0) and np.allclose(
+        z[["temp", "pressure"]].std(ddof=0), 1
+    )
     assert (z["const"] == 0).all()
     assert z["rain"].isna().sum() == 1
     mm = scale_columns(frame, "Min-max")
-    assert mm[["temp", "pressure", "rain"]].min().eq(0).all() and mm[["temp", "pressure", "rain"]].max().eq(1).all()
+    assert (
+        mm[["temp", "pressure", "rain"]].min().eq(0).all()
+        and mm[["temp", "pressure", "rain"]].max().eq(1).all()
+    )
     assert (mm["const"] == 0.5).all()
     pd.testing.assert_frame_equal(scale_columns(frame, "None"), frame.astype(float))
     with pytest.raises(ValueError):
@@ -244,15 +285,21 @@ def test_numeric_heatmap_ignores_non_numeric_columns_and_keeps_raw_values_for_ho
     heat = fig.data[0]
     assert list(heat.y) == ["temp", "pressure", "rain", "const"]
     assert list(heat.x) == list(frame.index)
-    np.testing.assert_allclose(heat.customdata, frame[["temp", "pressure", "rain", "const"]].T.to_numpy())
-    np.testing.assert_allclose(np.nanmean(heat.z[:2], axis=1), 0, atol=1e-12)  # z-scored by default
+    np.testing.assert_allclose(
+        heat.customdata, frame[["temp", "pressure", "rain", "const"]].T.to_numpy()
+    )
+    np.testing.assert_allclose(
+        np.nanmean(heat.z[:2], axis=1), 0, atol=1e-12
+    )  # z-scored by default
     assert "Value: %{customdata" in heat.hovertemplate
     assert heat.zmid == 0
 
 
 def test_numeric_heatmap_column_selection_orientation_and_validation():
     frame = heatmap_frame()
-    fig = numeric_heatmap_figure(frame, columns=["rain", "temp"], scaling="None", variables_on="x")
+    fig = numeric_heatmap_figure(
+        frame, columns=["rain", "temp"], scaling="None", variables_on="x"
+    )
     heat = fig.data[0]
     assert list(heat.x) == ["temp", "rain"] and list(heat.y) == list(frame.index)
     np.testing.assert_allclose(heat.z, frame[["temp", "rain"]].to_numpy())
@@ -266,13 +313,22 @@ def test_numeric_heatmap_column_selection_orientation_and_validation():
 
 def test_numeric_heatmap_sorting_and_clustering_reorder_observations():
     frame = heatmap_frame()
-    fig = numeric_heatmap_figure(frame, row_order="Sort by column", sort_by="temp", descending=True)
+    fig = numeric_heatmap_figure(
+        frame, row_order="Sort by column", sort_by="temp", descending=True
+    )
     assert list(fig.data[0].x) == list(frame["temp"].sort_values(ascending=False).index)
 
     # Two clear blocks of observations must end up contiguous after clustering.
-    blocks = pd.DataFrame({"a": [0, 10, 0, 10, 0, 10], "b": [0, 10, 0, 10, 0, 10]}, index=list("pqrstu"))
-    order = list(numeric_heatmap_figure(blocks, row_order="Cluster", scaling="None").data[0].x)
-    assert {tuple(sorted(order[:3])), tuple(sorted(order[3:]))} == {("p", "r", "t"), ("q", "s", "u")}
+    blocks = pd.DataFrame(
+        {"a": [0, 10, 0, 10, 0, 10], "b": [0, 10, 0, 10, 0, 10]}, index=list("pqrstu")
+    )
+    order = list(
+        numeric_heatmap_figure(blocks, row_order="Cluster", scaling="None").data[0].x
+    )
+    assert {tuple(sorted(order[:3])), tuple(sorted(order[3:]))} == {
+        ("p", "r", "t"),
+        ("q", "s", "u"),
+    }
 
     clustered = numeric_heatmap_figure(frame, cluster_columns=True)
     assert sorted(clustered.data[0].y) == sorted(["temp", "pressure", "rain", "const"])
@@ -286,8 +342,13 @@ def test_heatmap_page_renders_with_mixed_columns():
     app.session_state["current_numeric_cols"] = ["temp", "pressure", "rain", "const"]
     app.session_state["current_categorical_cols"] = ["city"]
     app.session_state["viz_state"] = {
-        "plot_type": "heatmap", "x": "None", "y": "temp", "color": "None",
-        "facet_col": "None", "facet_row": "None", "size": "None",
+        "plot_type": "heatmap",
+        "x": "None",
+        "y": "temp",
+        "color": "None",
+        "facet_col": "None",
+        "facet_row": "None",
+        "size": "None",
     }
     app.session_state["_plot_type_selector"] = "heatmap"
     app.run()
@@ -297,7 +358,9 @@ def test_heatmap_page_renders_with_mixed_columns():
     assert spec["data"][0]["type"] == "heatmap"
     assert spec["data"][0]["y"] == ["temp", "pressure", "rain", "const"]
 
-    next(w for w in app.selectbox if w.label == "Observation Order").set_value("Cluster")
+    next(w for w in app.selectbox if w.label == "Observation Order").set_value(
+        "Cluster"
+    )
     next(w for w in app.radio if w.label == "Variables On").set_value("X axis")
     app.run()
     assert not app.exception

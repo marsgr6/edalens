@@ -50,7 +50,9 @@ def test_run_colab_exposes_the_prefixed_app_and_stop_closes_everything(monkeypat
 
 
 def test_tunnel_without_a_url_fails_and_stops_the_app(monkeypatch):
-    monkeypatch.setattr(colab, "tunnel_command", fake_tunnel("print('connection refused')"))
+    monkeypatch.setattr(
+        colab, "tunnel_command", fake_tunnel("print('connection refused')")
+    )
     started = []
     real_start = colab.EDALensServer.start
 
@@ -94,8 +96,11 @@ def test_requirements_are_installed_once_per_runtime(monkeypatch, tmp_path):
 
 def test_failed_install_raises_with_pip_output(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        colab.subprocess, "run",
-        lambda command, **kwargs: subprocess.CompletedProcess(command, 1, "", "No matching distribution"),
+        colab.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 1, "", "No matching distribution"
+        ),
     )
     with pytest.raises(LaunchError, match="No matching distribution"):
         colab.install_requirements(marker=tmp_path / "installed")

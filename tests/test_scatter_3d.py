@@ -17,11 +17,21 @@ def scatter_app(frame: pd.DataFrame, **viz) -> AppTest:
     app = AppTest.from_function(visualization_page, default_timeout=30)
     app.session_state["filtered_df"] = frame
     app.session_state["operations"] = []
-    app.session_state["current_numeric_cols"] = frame.select_dtypes("number").columns.tolist()
-    app.session_state["current_categorical_cols"] = frame.select_dtypes("object").columns.tolist()
+    app.session_state["current_numeric_cols"] = frame.select_dtypes(
+        "number"
+    ).columns.tolist()
+    app.session_state["current_categorical_cols"] = frame.select_dtypes(
+        "object"
+    ).columns.tolist()
     app.session_state["viz_state"] = {
-        "plot_type": "scatter", "x": "a", "y": "b", "color": "None",
-        "facet_col": "None", "facet_row": "None", "size": "None", **viz,
+        "plot_type": "scatter",
+        "x": "a",
+        "y": "b",
+        "color": "None",
+        "facet_col": "None",
+        "facet_row": "None",
+        "size": "None",
+        **viz,
     }
     app.session_state["_plot_type_selector"] = "scatter"
     return app
