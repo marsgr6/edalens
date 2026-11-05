@@ -84,6 +84,13 @@ Many plots support **custom category order** for X, color and facets — useful 
 months, weekdays or ordinal scales. A warning appears when a color/facet column has
 more than 50 categories.
 
+Your choices carry over when you switch plot types. X, Y and Color stay when the
+new plot accepts them. X and Y that a plot cannot use (for example a text X on a
+scatter) come back when you return to a plot that can, instead of being reset.
+A custom order belongs to its column, not to a plot: reordering `day` (or leaving
+a category out) applies to every plot and role where `day` appears, until new
+data is loaded. Lines, bars, boxes and facet panels are drawn in that order.
+
 ## 4. Time Series
 
 This page has its **own loader** (sidebar → *Load Data*): upload or GitHub link,

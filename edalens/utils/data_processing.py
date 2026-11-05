@@ -302,7 +302,14 @@ def apply_operations(raw_df: pd.DataFrame, operations: Sequence[Operation]) -> p
 def column_types(df: pd.DataFrame) -> tuple[list[str], list[str]]:
     """Return the numeric and categorical column lists the views use."""
     numeric = df.select_dtypes(include="number").columns.tolist()
-    categorical = df.select_dtypes(include=["object", "category", "string"]).columns.tolist()
+    # By dtype test, not select_dtypes("object"): pandas 3 stores text as "str".
+    categorical = [
+        column
+        for column in df.columns
+        if ptypes.is_object_dtype(df[column])
+        or isinstance(df[column].dtype, pd.CategoricalDtype)
+        or ptypes.is_string_dtype(df[column])
+    ]
     return numeric, categorical
 
 

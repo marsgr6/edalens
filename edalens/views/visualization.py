@@ -21,6 +21,37 @@ from edalens.utils.plot_utils import (
 warnings.filterwarnings('ignore')
 
 LINEPLOT_ROW_GAP_PX = 110
+
+
+def is_text_like(values) -> bool:
+    """Text or categories: object, category, or pandas' string dtype ("str" in pandas 3)."""
+    dtype = values.dtype
+    return (
+        pd.api.types.is_object_dtype(dtype)
+        or isinstance(dtype, pd.CategoricalDtype)
+        or pd.api.types.is_string_dtype(dtype)
+    )
+
+
+def text_columns(frame, include_bool=False) -> list:
+    """Text-like columns (see is_text_like), plus boolean ones on request."""
+    return [
+        c for c in frame.columns
+        if is_text_like(frame[c]) or (include_bool and pd.api.types.is_bool_dtype(frame[c].dtype))
+    ]
+
+
+def levels(values) -> list:
+    """Distinct non-missing values: in category order for a categorical, else as they appear."""
+    if isinstance(values.dtype, pd.CategoricalDtype):
+        present = set(values.dropna().unique())
+        return [c for c in values.cat.categories if c in present]
+    return list(values.dropna().unique())
+
+
+def ordered_categories(values, order):
+    """``values`` as an ordered categorical in ``order``; values left out of it become missing."""
+    return pd.Categorical(values.where(values.isin(order)), categories=list(order), ordered=True)
 # Plot types drawn with one panel per Facet Col / Facet Row value.
 FACET_PLOTS = ('bars', 'boxes', 'lineplot', 'histogram', 'density 1', 'density 2', 'scatter', 'catplot')
 
@@ -81,72 +112,109 @@ def visualization():
     if "_plot_type_selector" not in st.session_state:
         st.session_state._plot_type_selector = st.session_state.viz_state["plot_type"]
 
+    def role_options(plot, risk):
+        """Columns allowed for X and Y by a plot type ('None' where the role is optional)."""
+        if risk:
+            x_opts, y_opts = data.columns.tolist(), data.columns.tolist()
+        else:
+            if plot in ['bars', 'boxes', 'catplot', 'lineplot', 'heatmap', 'waterfall', 'candlestick']:
+                x_opts = categorical_cols.copy() if categorical_cols else data.columns.tolist()
+            else:  # scatter, histogram, density 1/2, regression, ridges
+                x_opts = numeric_cols.copy() if numeric_cols else data.columns.tolist()
+            if plot == 'ridges':
+                y_opts = categorical_cols.copy() if categorical_cols else data.columns.tolist()
+            else:  # Boxes need a numeric Y (the distribution); X is an optional grouping.
+                y_opts = numeric_cols.copy() if numeric_cols else data.columns.tolist()
+        x_opts = x_opts or data.columns.tolist()
+        y_opts = y_opts or data.columns.tolist()
+        if plot in ['boxes', 'heatmap']:
+            x_opts = ['None'] + [c for c in x_opts if c != 'None']
+        if plot == 'bars':  # Y is used only in "Time is here" mode.
+            y_opts = ['None'] + [c for c in y_opts if c != 'None']
+        if plot in ['histogram', 'density 1']:
+            y_opts = ['None']
+        return x_opts, y_opts
+
+    def remember(role, value):
+        """Recent X/Y choices, newest first, so a later plot type can bring them back."""
+        memory = st.session_state.setdefault("viz_memory", {"x": [], "y": []})
+        if value not in (None, "None"):
+            memory[role] = [value] + [v for v in memory[role] if v != value][:9]
+
+    def zone_changed(role, key):
+        remember(role, st.session_state[key])  # An explicit pick in the X or Y dropdown.
+
     def handle_plot_change():
         new_plot = st.session_state.get("_plot_type_selector", st.session_state.viz_state.get("plot_type", "bars"))
         state = st.session_state.viz_state
         state["plot_type"] = new_plot
+        # What the outgoing plot showed counts as a choice, unless the last switch filled it in.
+        auto = st.session_state.get("viz_auto", {})
+        for role in ("x", "y"):
+            if state[role] != auto.get(role):
+                remember(role, state[role])
+        memory = st.session_state["viz_memory"]
+        x_opts, y_opts = role_options(new_plot, st.session_state.get("risk_it_all", False))
 
-        # Helpers to get default fallback columns safely
-        first_cat = categorical_cols[0] if categorical_cols else (data.columns[0] if len(data.columns) > 0 else None)
-        first_num = numeric_cols[0] if numeric_cols else (data.columns[0] if len(data.columns) > 0 else None)
-        second_num = numeric_cols[1] if len(numeric_cols) > 1 else first_num
+        def pick(options, candidates, fallback):
+            # Recent choices in this role, then in the other role (a numeric Y can become X).
+            return next((c for c in candidates if c in options and c != "None"), fallback)
 
-        # Smart defaults and persistence depending on exact plot requirements
-        if new_plot in ["bars", "catplot", "lineplot", "waterfall", "candlestick"]:
-            if state["x"] not in categorical_cols: 
-                state["x"] = first_cat
-            if new_plot == "bars": 
-                state["y"] = "None"
-            else: 
-                if state["y"] not in numeric_cols: 
-                    state["y"] = first_num
-            
-        elif new_plot == "boxes":
-            # Boxplots: optional categorical grouping on X (or None for single box),
-            # required numerical variable on Y for the distribution.
-            # (Supports horizontal orientation internally if roles are swapped via Risk It All.)
-            if state["x"] not in categorical_cols + ["None"]:
-                state["x"] = first_cat if first_cat else "None"
-            # Ensure Y is always a numeric column when possible (do not allow None)
-            if state["y"] not in numeric_cols:
-                state["y"] = first_num if first_num else (data.columns[0] if len(data.columns) > 0 else "None")
-                
-        elif new_plot in ["scatter", "regression", "density 2"]:
-            # These plots strictly require two numerical variables
-            if state["x"] not in numeric_cols: 
-                state["x"] = first_num
-            if state["y"] not in numeric_cols: 
-                state["y"] = second_num
-        
-        elif new_plot in ["histogram", "density 1"]:
-            # Single numerical variable plots
-            if state["x"] not in numeric_cols: 
-                state["x"] = first_num
-            state["y"] = "None" # Y is ignored or forced to count/density
+        x_fallback = "None" if new_plot == "heatmap" else next((c for c in x_opts if c != "None"), "None")
+        state["x"] = pick(x_opts, [*memory["x"], *memory["y"]], x_fallback)
+        if new_plot in ['histogram', 'density 1']:
+            state["y"] = "None"
+        else:
+            # Two-variable plots need a Y other than X when there is one.
+            y_candidates = [c for c in [*memory["y"], *memory["x"]] if c != state["x"]]
+            y_fallback = "None" if new_plot == "bars" else next(
+                (c for c in y_opts if c not in ("None", state["x"])), y_opts[0])
+            state["y"] = pick(y_opts, y_candidates, y_fallback)
+        st.session_state["viz_auto"] = {"x": state["x"], "y": state["y"]}
 
-        elif new_plot == "heatmap":
-            if state["x"] not in categorical_cols + ["None"]: 
-                state["x"] = "None"
-            if state["y"] not in numeric_cols: 
-                state["y"] = first_num
-
-        elif new_plot == "ridges":
-            # Ridges plot distributions (numeric) over categories (categorical)
-            if state["x"] not in numeric_cols: 
-                state["x"] = first_num
-            if state["y"] not in categorical_cols: 
-                state["y"] = first_cat
-
-        # The X/Y dropdowns hold their own value (see mapping_zone); move them to the new defaults.
+        # The X/Y dropdowns hold their own value (see mapping_zone); move them to the choice.
         st.session_state["x_zone"] = state["x"]
         st.session_state["y_zone"] = state["y"]
 
-    def mapping_zone(label, options, key, state_value):
+    def order_select(label, var, values, sort=True):
+        """A "Custom Order" multiselect whose order is kept per column for every plot.
+
+        The order (and any categories removed from it) applies wherever the column
+        appears again: another role, another plot type, or after other controls change.
+        New categories in the data are appended.
+        """
+        version = st.session_state.get("data_version", 0)
+        if st.session_state.get("category_orders_version") != version:
+            st.session_state["category_orders"] = {}
+            st.session_state["category_orders_version"] = version
+        store = st.session_state["category_orders"]
+        present = list(pd.unique(values.dropna()))
+        if sort:
+            try:
+                present = sorted(present)
+            except TypeError:  # Mixed types.
+                present = sorted(present, key=str)
+        saved = store.get(var)
+        if saved:
+            default = [v for v in saved["order"] if v in present]
+            default += [v for v in present if v not in saved["known"]]
+        else:
+            default = present
+        # A stable key keeps the widget (and an open dropdown) steady while it is edited;
+        # a widget that was not shown last run starts again from the saved order.
+        chosen = st.multiselect(label, options=present, default=default, key=f"category_order_{version}_{label}")
+        if chosen != default:  # Only a user edit updates the shared order.
+            known = set(saved["known"]) if saved else set()
+            store[var] = {"order": list(chosen), "known": list(known | set(present))}
+        return chosen
+
+    def mapping_zone(label, options, key, state_value, role=None):
         # The widget keeps its value in session state; no `index`, which would come from
         # viz_state (one run behind the widget) and could reset a fresh selection.
         if st.session_state.get(key) not in options:
             st.session_state[key] = state_value if state_value in options else options[0]
-        st.selectbox(label, options, key=key, label_visibility="collapsed")
+        st.selectbox(label, options, key=key, label_visibility="collapsed",
+                     on_change=zone_changed if role else None, args=(role, key) if role else None)
 
     def check_cardinality(var_name):
         if var_name and var_name != "None" and var_name in categorical_cols:
@@ -157,7 +225,7 @@ def visualization():
     # --- SIDEBAR CONTROLS (Plot Type & Risk) ---
     with st.sidebar:
         st.markdown("### Controls")
-        risk_it_all = st.checkbox("Risk It All (Unlock all variable mappings)", value=False)
+        risk_it_all = st.checkbox("Risk It All (Unlock all variable mappings)", value=False, key="risk_it_all")
 
     # --- VARIABLE POOL (VISUAL DISPLAY) ---
     with st.expander("🗂️ Variables Pool", expanded=False):
@@ -185,45 +253,7 @@ def visualization():
     # --- MAPPING ZONES (HORIZONTAL DROPDOWNS) ---
     current_plot = st.session_state._plot_type_selector
     
-    # Determine allowed options based on current plot and risk_it_all
-    if risk_it_all:
-        x_opts = data.columns.tolist()
-        y_opts = data.columns.tolist()
-    else:
-        # Smart X mapping based on standard statistical practices
-        if current_plot in ['bars', 'boxes', 'catplot', 'lineplot', 'heatmap', 'waterfall', 'candlestick']:
-            x_opts = categorical_cols.copy() if categorical_cols else data.columns.tolist()
-        else:  # scatter, histogram, density 1/2, regression, ridges
-            x_opts = numeric_cols.copy() if numeric_cols else data.columns.tolist()
-
-        # Smart Y mapping based on standard statistical practices
-        if current_plot in ['ridges']:
-            y_opts = categorical_cols.copy() if categorical_cols else data.columns.tolist()
-        elif current_plot in ['histogram', 'density 1']:
-            y_opts = []  # Force to None below
-        elif current_plot == 'boxes':
-            # Boxes require a numeric Y (distribution); X is optional categorical grouping
-            y_opts = numeric_cols.copy() if numeric_cols else data.columns.tolist()
-        else:
-            y_opts = numeric_cols.copy() if numeric_cols else data.columns.tolist()
-
-    # Fallback overrides to guarantee UI doesn't crash on empty selections
-    if not x_opts:
-        x_opts = data.columns.tolist()
-    if not y_opts:
-        y_opts = data.columns.tolist()
-
-    # Append 'None' allowances where applicable
-    # For boxes: X may be None (single boxplot) or categorical; Y must stay numeric (no None)
-    if current_plot in ['boxes', 'heatmap']:
-        if 'None' not in x_opts:
-            x_opts = ['None'] + x_opts
-    if current_plot == 'bars':
-        if 'None' not in y_opts:
-            y_opts = ['None'] + y_opts
-    # Note: intentionally do NOT allow None for Y when plot_type == 'boxes'
-    if current_plot in ['histogram', 'density 1']:
-        y_opts = ['None']  # Completely overrides Y to None
+    x_opts, y_opts = role_options(current_plot, risk_it_all)
 
     cat_opts = ["None"] + (data.columns.tolist() if risk_it_all else categorical_cols)
     size_opts = ["None"] + (data.columns.tolist() if risk_it_all else numeric_cols)
@@ -275,10 +305,10 @@ def visualization():
         )
     with z2:
         st.markdown("**X**")
-        mapping_zone("X", x_opts, "x_zone", s_x)
+        mapping_zone("X", x_opts, "x_zone", s_x, role="x")
     with z3:
         st.markdown("**Y**")
-        mapping_zone("Y", y_opts, "y_zone", s_y)
+        mapping_zone("Y", y_opts, "y_zone", s_y, role="y")
     with z4:
         st.markdown("**Color (Hue)**")
         mapping_zone("Color", cat_opts, "color_zone", s_color)
@@ -382,7 +412,7 @@ def visualization():
 
         elif plot_type == "pairplot":
             numeric_cols_list = list(data.select_dtypes(include='number').columns)
-            cat_cols = list(data.select_dtypes(include=['object', 'category', 'bool']).columns)
+            cat_cols = text_columns(data, include_bool=True)
 
             if not numeric_cols_list:
                 st.warning("No numeric columns available for pairplot.")
@@ -617,24 +647,24 @@ def visualization():
 
                     if hue is not None: plot_data[hue] = plot_data[hue].astype(str)
 
-                    if var_x in plot_data.columns and plot_data[var_x].dtype.name in ['object', 'category']:
-                        custom_order_x = st.multiselect(f"Custom Order for X: {var_x}", options=plot_data[var_x].dropna().unique().tolist(), default=sorted(plot_data[var_x].dropna().unique().tolist()))
-                        plot_data[var_x] = pd.Categorical(plot_data[var_x], categories=custom_order_x, ordered=True)
+                    if var_x in plot_data.columns and is_text_like(plot_data[var_x]):
+                        custom_order_x = order_select(f"Custom Order for X: {var_x}", var_x, plot_data[var_x])
+                        plot_data[var_x] = ordered_categories(plot_data[var_x], custom_order_x)
                         category_orders[var_x] = custom_order_x
 
-                    if hue and hue != 'None' and hue in plot_data.columns and plot_data[hue].dtype.name in ['object', 'category']:
-                        custom_order_hue = st.multiselect(f"Custom Order for Hue: {hue}", options=plot_data[hue].dropna().unique().tolist(), default=sorted(plot_data[hue].dropna().unique().tolist()))
-                        plot_data[hue] = pd.Categorical(plot_data[hue], categories=custom_order_hue, ordered=True)
+                    if hue and hue != 'None' and hue in plot_data.columns and is_text_like(plot_data[hue]):
+                        custom_order_hue = order_select(f"Custom Order for Hue: {hue}", hue, plot_data[hue])
+                        plot_data[hue] = ordered_categories(plot_data[hue], custom_order_hue)
                         category_orders[hue] = custom_order_hue
 
-                    if facet_col != 'None' and facet_col in plot_data.columns and plot_data[facet_col].dtype.name in ['object', 'category']:
-                        custom_order_col = st.multiselect(f"Custom Order for Col: {facet_col}", options=plot_data[facet_col].dropna().unique().tolist(), default=sorted(plot_data[facet_col].dropna().unique().tolist()))
-                        plot_data[facet_col] = pd.Categorical(plot_data[facet_col], categories=custom_order_col, ordered=True)
+                    if facet_col != 'None' and facet_col in plot_data.columns and is_text_like(plot_data[facet_col]):
+                        custom_order_col = order_select(f"Custom Order for Col: {facet_col}", facet_col, plot_data[facet_col])
+                        plot_data[facet_col] = ordered_categories(plot_data[facet_col], custom_order_col)
                         category_orders[facet_col] = custom_order_col
 
-                    if facet_row != 'None' and facet_row in plot_data.columns and plot_data[facet_row].dtype.name in ['object', 'category']:
-                        custom_order_row = st.multiselect(f"Custom Order for Row: {facet_row}", options=plot_data[facet_row].dropna().unique().tolist(), default=sorted(plot_data[facet_row].dropna().unique().tolist()))
-                        plot_data[facet_row] = pd.Categorical(plot_data[facet_row], categories=custom_order_row, ordered=True)
+                    if facet_row != 'None' and facet_row in plot_data.columns and is_text_like(plot_data[facet_row]):
+                        custom_order_row = order_select(f"Custom Order for Row: {facet_row}", facet_row, plot_data[facet_row])
+                        plot_data[facet_row] = ordered_categories(plot_data[facet_row], custom_order_row)
                         category_orders[facet_row] = custom_order_row
 
                 if tplot == "bars":
@@ -645,9 +675,9 @@ def visualization():
 
                         is_object = False
                         if isinstance(plot_data[var_x].dtype, pd.CategoricalDtype):
-                            if plot_data[var_x].cat.categories.dtype.name == 'object': is_object = True
+                            if is_text_like(plot_data[var_x].cat.categories): is_object = True
                         else:
-                            if plot_data[var_x].dtype.name == 'object': is_object = True
+                            if is_text_like(plot_data[var_x]): is_object = True
 
                         if not is_object:
                             st.warning(f"Time series mode requires '{var_x}' to be an object column (e.g., dates).")
@@ -657,8 +687,8 @@ def visualization():
                             st.warning(f"Time series mode requires '{var_y}' to be a numerical column.")
                             return
 
-                        facet_col_vals = plot_data[facet_col].dropna().unique() if facet_col != 'None' else [None]
-                        facet_row_vals = plot_data[facet_row].dropna().unique() if facet_row != 'None' else [None]
+                        facet_col_vals = levels(plot_data[facet_col]) if facet_col != 'None' else [None]
+                        facet_row_vals = levels(plot_data[facet_row]) if facet_row != 'None' else [None]
 
                         n_cols = max(len(facet_col_vals), 1)
                         n_rows = max(len(facet_row_vals), 1)
@@ -674,7 +704,7 @@ def visualization():
                             ]
                         )
 
-                        hue_values = plot_data[hue].dropna().unique() if hue is not None else [None]
+                        hue_values = levels(plot_data[hue]) if hue is not None else [None]
                         color_map = {hv: PALETTE[idx % len(PALETTE)] for idx, hv in enumerate(hue_values)}
 
                         for i_row, row_val in enumerate(facet_row_vals):
@@ -791,10 +821,10 @@ def visualization():
                     if hue_used is not None and hue_used in plot_data.columns: plot_data[hue_used] = plot_data[hue_used].astype(str)
 
                     for axis_var, label in [(cat_var, 'x' if orientation == 'v' else 'y'), (hue_used, 'hue'), (facet_col_used, 'col'), (facet_row_used, 'row')]:
-                        if axis_var and axis_var in plot_data.columns and plot_data[axis_var].dtype.name in ['object', 'category']:
+                        if axis_var and axis_var in plot_data.columns and is_text_like(plot_data[axis_var]):
                             opts = plot_data[axis_var].dropna().unique().tolist()
-                            order = st.multiselect(f"Custom Order for {label}: {axis_var}", options=opts, default=sorted(opts))
-                            plot_data[axis_var] = pd.Categorical(plot_data[axis_var], categories=order, ordered=True)
+                            order = order_select(f"Custom Order for {label}: {axis_var}", axis_var, plot_data[axis_var])
+                            plot_data[axis_var] = ordered_categories(plot_data[axis_var], order)
                             category_orders[axis_var] = order
 
                 point_mode = 'all' if swarm_points else False
@@ -802,10 +832,10 @@ def visualization():
                 point_kwargs = dict(jitter=jitter_val, pointpos=0, marker=dict(size=5, opacity=0.5, line=dict(width=0)))
 
                 if hue_used:
-                    groups = plot_data[hue_used].dropna().unique().tolist()
+                    groups = levels(plot_data[hue_used])
                     if hue_used in category_orders: groups = [g for g in category_orders[hue_used] if g in groups]
                 elif cat_var:
-                    groups = plot_data[cat_var].dropna().unique().tolist()
+                    groups = levels(plot_data[cat_var])
                     if cat_var in category_orders: groups = [g for g in category_orders[cat_var] if g in groups]
                 else:
                     groups = [None]
@@ -817,7 +847,7 @@ def visualization():
                         mask = plot_data[hue_used] == grp
                         sub = plot_data[mask]
                         if cat_var:
-                            cats = sub[cat_var].dropna().unique().tolist()
+                            cats = levels(sub[cat_var])
                             if cat_var in category_orders: cats = [c for c in category_orders[cat_var] if c in cats]
                             values, cat_values = sub[num_var], sub[cat_var]
                         else:
@@ -857,7 +887,7 @@ def visualization():
                 if band_interval and cat_var and not single_var:
                     from scipy import stats as _stats
                     cat_order = category_orders.get(cat_var, sorted(plot_data[cat_var].dropna().unique().tolist()))
-                    line_groups = plot_data[hue_used].dropna().unique().tolist() if hue_used else [None]
+                    line_groups = levels(plot_data[hue_used]) if hue_used else [None]
                     if hue_used and hue_used in category_orders: line_groups = [g for g in category_orders[hue_used] if g in line_groups]
 
                     for li, lgrp in enumerate(line_groups):
@@ -884,7 +914,7 @@ def visualization():
 
                 elif band_interval and single_var:
                     from scipy import stats as _stats
-                    hue_groups = plot_data[hue_used].dropna().unique().tolist() if hue_used else [None]
+                    hue_groups = levels(plot_data[hue_used]) if hue_used else [None]
                     if hue_used and hue_used in category_orders: hue_groups = [g for g in category_orders[hue_used] if g in hue_groups]
                     n_groups = len(hue_groups)
                     
@@ -952,13 +982,13 @@ def visualization():
 
                     category_orders = {}
                     for var_name, prefix in [(var_x, "x"), (hue_used, "hue"), (facet_col_used, "col"), (facet_row_used, "row")]:
-                        if var_name and var_name in plot_data.columns and plot_data[var_name].dtype.name in ['object', 'category']:
-                            c_order = st.multiselect(f"Custom Order for {prefix}: {var_name}", options=plot_data[var_name].dropna().unique().tolist(), default=sorted(plot_data[var_name].dropna().unique().tolist()))
-                            plot_data[var_name] = pd.Categorical(plot_data[var_name], categories=c_order, ordered=True)
+                        if var_name and var_name in plot_data.columns and is_text_like(plot_data[var_name]):
+                            c_order = order_select(f"Custom Order for {prefix}: {var_name}", var_name, plot_data[var_name])
+                            plot_data[var_name] = ordered_categories(plot_data[var_name], c_order)
                             category_orders[var_name] = c_order
 
-                facet_col_vals = plot_data[facet_col_used].dropna().unique().tolist() if facet_col_used else [None]
-                facet_row_vals = plot_data[facet_row_used].dropna().unique().tolist() if facet_row_used else [None]
+                facet_col_vals = levels(plot_data[facet_col_used]) if facet_col_used else [None]
+                facet_row_vals = levels(plot_data[facet_row_used]) if facet_row_used else [None]
                 n_cols = len(facet_col_vals) if facet_col_used else 1
                 n_rows = len(facet_row_vals) if facet_row_used else 1
 
@@ -974,11 +1004,11 @@ def visualization():
                     ]
                 )
 
-                hue_values = plot_data[hue_used].dropna().unique() if (hue_used and hue_used != var_x) else [None]
+                hue_values = levels(plot_data[hue_used]) if (hue_used and hue_used != var_x) else [None]
                 color_map = {hv: PALETTE[idx % len(PALETTE)] for idx, hv in enumerate(hue_values)}
 
                 line_styles = {'solid': 'solid', 'dash': 'dash', 'dot': 'dot', 'dashdot': 'dashdot'}
-                if style_used and style_used in plot_data.columns and plot_data[style_used].dtype.name in ['object', 'category']:
+                if style_used and style_used in plot_data.columns and is_text_like(plot_data[style_used]):
                     style_values = plot_data[style_used].dropna().unique()
                     style_map = {v: list(line_styles.values())[i % len(line_styles)] for i, v in enumerate(style_values)}
                 else:
@@ -1010,9 +1040,9 @@ def visualization():
                             if time_series:
                                 is_object = False
                                 if isinstance(plot_data[var_x].dtype, pd.CategoricalDtype):
-                                    if plot_data[var_x].cat.categories.dtype.name == 'object': is_object = True
+                                    if is_text_like(plot_data[var_x].cat.categories): is_object = True
                                 else:
-                                    if plot_data[var_x].dtype.name == 'object': is_object = True
+                                    if is_text_like(plot_data[var_x]): is_object = True
 
                                 if not is_object:
                                     st.warning(f"Time series requires '{var_x}' to be an object (dates).")
@@ -1071,7 +1101,7 @@ def visualization():
                 var_y = global_var_y
                 hue = global_hue
 
-                cat_cols = data.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+                cat_cols = text_columns(data, include_bool=True)
                 only_numeric = len(cat_cols) == 0
 
                 with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
@@ -1093,14 +1123,14 @@ def visualization():
                                 no_hue = st.checkbox("No Hue?", value=False)
                                 hue_param = var_y if no_hue else hue
 
-                                custom_order_y = st.multiselect(f"Custom Order for Y: {var_y}", options=sorted(y_values_unique.tolist()), default=sorted(y_values_unique.tolist()))
-                                plot_data[var_y] = pd.Categorical(plot_data[var_y], categories=custom_order_y, ordered=True)
+                                custom_order_y = order_select(f"Custom Order for Y: {var_y}", var_y, plot_data[var_y])
+                                plot_data[var_y] = ordered_categories(plot_data[var_y], custom_order_y)
                                 y_values_unique = custom_order_y
 
                                 if hue_param != var_y and hue_param in plot_data.columns:
                                     hue_values_unique = plot_data[hue_param].dropna().unique()
-                                    custom_order_hue = st.multiselect(f"Custom Order for Hue: {hue_param}", options=sorted(hue_values_unique.tolist()), default=sorted(hue_values_unique.tolist()))
-                                    plot_data[hue_param] = pd.Categorical(plot_data[hue_param], categories=custom_order_hue, ordered=True)
+                                    custom_order_hue = order_select(f"Custom Order for Hue: {hue_param}", hue_param, plot_data[hue_param])
+                                    plot_data[hue_param] = ordered_categories(plot_data[hue_param], custom_order_hue)
                                     global_hue_categories = custom_order_hue
 
                 if only_numeric:
@@ -1134,7 +1164,7 @@ def visualization():
                         row_idx = idx + 1
                         subset = plot_data[plot_data[var_y] == y_val]
                         if subset.empty: continue
-                        hue_values = subset[hue_param].dropna().unique() if (hue_param != var_y and hue_param in subset.columns) else [None]
+                        hue_values = levels(subset[hue_param]) if (hue_param != var_y and hue_param in subset.columns) else [None]
 
                         for j, hue_val in enumerate(hue_values):
                             hue_subset = subset[subset[hue_param] == hue_val] if hue_val is not None else subset
@@ -1170,14 +1200,14 @@ def visualization():
 
                     category_orders = {}
                     for v_name, label in [(var_x, 'X'), (hue_var, 'Hue'), (facet_col, 'Col'), (facet_row, 'Row')]:
-                        if v_name != 'None' and v_name in plot_data.columns and plot_data[v_name].dtype.name in ['object', 'category']:
-                            c_order = st.multiselect(f"Custom Order for {label}: {v_name}", options=plot_data[v_name].dropna().unique().tolist(), default=sorted(plot_data[v_name].dropna().unique().tolist()), key=f"hist_ord_{label}")
-                            plot_data[v_name] = pd.Categorical(plot_data[v_name], categories=c_order, ordered=True)
+                        if v_name != 'None' and v_name in plot_data.columns and is_text_like(plot_data[v_name]):
+                            c_order = order_select(f"Custom Order for {label}: {v_name}", v_name, plot_data[v_name])
+                            plot_data[v_name] = ordered_categories(plot_data[v_name], c_order)
                             category_orders[v_name] = c_order
 
                 if element == "step":
                     fig = go.Figure()
-                    for hue_val in plot_data[hue_var].dropna().unique() if hue_var != "None" else [None]:
+                    for hue_val in levels(plot_data[hue_var]) if hue_var != "None" else [None]:
                         subset = plot_data[plot_data[hue_var] == hue_val] if hue_var != "None" else plot_data
                         fig.add_trace(go.Histogram(x=subset[var_x], histnorm=stat if stat != "count" else None, cumulative_enabled=cumulative, opacity=0.75 if multiple == 'layer' else 1.0, name=str(hue_val) if hue_val is not None else var_x))
                     fig.update_layout(barmode=barmode, width=800, height=600, title="Step Histogram", xaxis_title=var_x, yaxis_title=stat.capitalize(), showlegend=True)
@@ -1220,9 +1250,9 @@ def visualization():
 
 
                     def add_category_order(var_name, prefix):
-                        if var_name and var_name != 'None' and plot_data[var_name].dtype.name in ['object', 'category']:
-                            c_order = st.multiselect(f"Custom Order for {prefix}: {var_name}", options=plot_data[var_name].dropna().unique().tolist(), default=sorted(plot_data[var_name].dropna().unique().tolist()), key=f"den_ord_{prefix}")
-                            plot_data[var_name] = pd.Categorical(plot_data[var_name], categories=c_order, ordered=True)
+                        if var_name and var_name != 'None' and is_text_like(plot_data[var_name]):
+                            c_order = order_select(f"Custom Order for {prefix}: {var_name}", var_name, plot_data[var_name])
+                            plot_data[var_name] = ordered_categories(plot_data[var_name], c_order)
                             category_orders[var_name] = c_order
                     
                     add_category_order(var_x, 'x')
@@ -1246,7 +1276,7 @@ def visualization():
                                 facet_combinations = filtered_plot_data[facets].drop_duplicates()
                                 for facet in facets:
                                     if facet in category_orders:
-                                        facet_combinations[facet] = pd.Categorical(facet_combinations[facet], categories=category_orders[facet], ordered=True)
+                                        facet_combinations[facet] = ordered_categories(facet_combinations[facet], category_orders[facet])
                                 facet_combinations = facet_combinations.sort_values(by=facets)
                                 n_rows = facet_combinations[facet_row].nunique() if facet_row != 'None' else 1
                                 n_cols = facet_combinations[facet_col].nunique() if facet_col != 'None' else 1
@@ -1287,7 +1317,7 @@ def visualization():
                             col_idx = list(facet_combinations[facet_col].unique()).index(facet_vals[-1]) + 1 if facet_col != 'None' else 1
                         else: row_idx, col_idx = 1, 1
 
-                        hue_values = group_df[hue_var].dropna().unique() if hue_var != 'None' else [None]
+                        hue_values = levels(group_df[hue_var]) if hue_var != 'None' else [None]
                         if hue_var != 'None' and hue_var in category_orders: hue_values = [v for v in category_orders[hue_var] if v in hue_values]
 
                         offset = 0
@@ -1408,10 +1438,10 @@ def visualization():
                                                            help="Shadow of each point on the XY, XZ and YZ planes.")
 
                     def add_category_order(var_name, label):
-                        if var_name != 'None' and var_name in plot_data.columns and plot_data[var_name].dtype.name in ['object', 'category']:
-                            custom_order = st.multiselect(f"Custom Order for {label} ({var_name})", options=plot_data[var_name].dropna().unique().tolist(), default=sorted(plot_data[var_name].dropna().unique().tolist()))
+                        if var_name != 'None' and var_name in plot_data.columns and is_text_like(plot_data[var_name]):
+                            custom_order = order_select(f"Custom Order for {label} ({var_name})", var_name, plot_data[var_name])
                             if custom_order:
-                                plot_data[var_name] = pd.Categorical(plot_data[var_name], categories=custom_order, ordered=True)
+                                plot_data[var_name] = ordered_categories(plot_data[var_name], custom_order)
                                 category_orders[var_name] = custom_order
 
                     add_category_order(hue, "Hue")
@@ -1484,15 +1514,15 @@ def visualization():
                     global_point_size = st.slider("Global Marker Size", 5, 50, 10, 5)
 
                     for v_name, label in [(var_x, 'X Variable'), (var_y, 'Y Variable'), (hue, 'Hue'), (col, 'Facet Column'), (row, 'Facet Row')]:
-                        if v_name != 'None' and v_name in plot_data.columns and plot_data[v_name].dtype.name in ['object', 'category']:
-                            c_order = st.multiselect(f"Custom Order for {label} ({v_name})", options=plot_data[v_name].dropna().unique().tolist(), default=sorted(plot_data[v_name].dropna().unique().tolist()))
+                        if v_name != 'None' and v_name in plot_data.columns and is_text_like(plot_data[v_name]):
+                            c_order = order_select(f"Custom Order for {label} ({v_name})", v_name, plot_data[v_name])
                             if c_order:
-                                plot_data[v_name] = pd.Categorical(plot_data[v_name], categories=c_order, ordered=True)
+                                plot_data[v_name] = ordered_categories(plot_data[v_name], c_order)
                                 category_orders[v_name] = c_order
 
                 if col != 'None' or row != 'None':
-                    col_vals = plot_data[col].dropna().unique() if col != 'None' else [None]
-                    row_vals = plot_data[row].dropna().unique() if row != 'None' else [None]
+                    col_vals = levels(plot_data[col]) if col != 'None' else [None]
+                    row_vals = levels(plot_data[row]) if row != 'None' else [None]
                     n_cols, n_rows = max(len(col_vals), 1), max(len(row_vals), 1)
 
                     fig = make_subplots(
@@ -1501,7 +1531,7 @@ def visualization():
                         shared_yaxes=True, shared_xaxes=True, horizontal_spacing=0.1, vertical_spacing=0.12
                     )
 
-                    hue_values = plot_data[hue].dropna().unique() if hue != 'None' else [None]
+                    hue_values = levels(plot_data[hue]) if hue != 'None' else [None]
                     color_map = {hv: PALETTE[idx % len(PALETTE)] for idx, hv in enumerate(hue_values)}
 
                     for i_row, row_val in enumerate(row_vals):
@@ -1596,10 +1626,9 @@ def visualization():
                     dayfirst = st.checkbox("Day First when X holds dates (e.g., 31/12/2023)", value=True)
                     x_values = plot_data[var_x].dropna()
                     # Dates are plotted in date order; other text gets a custom order.
-                    if x_values.dtype.name in ['object', 'category'] and not parse_dates(x_values, dayfirst).notna().all():
-                        values = x_values.unique().tolist()
-                        c_order = st.multiselect(f"Custom Order for x: {var_x}", options=values, default=values)
-                        plot_data[var_x] = pd.Categorical(plot_data[var_x], categories=c_order, ordered=True)
+                    if is_text_like(x_values) and not parse_dates(x_values, dayfirst).notna().all():
+                        c_order = order_select(f"Custom Order for x: {var_x}", var_x, plot_data[var_x], sort=False)
+                        plot_data[var_x] = ordered_categories(plot_data[var_x], c_order)
                     if plot_type == 'candlestick':
                         source = st.radio("Candles from", CANDLE_SOURCES, index=0,
                                           help="One value column: each X step's first, highest, lowest and last value. "
@@ -1639,8 +1668,8 @@ def visualization():
                 with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
                     colormap = st.selectbox("Select Colormap", ["Viridis", "Plasma", "Inferno", "Magma", "Cividis", "Blues", "Reds", "Greens", "RdBu_r"], index=0)
                     if cat_var is not None and cat_var in plot_data.columns:
-                        custom_order = st.multiselect(f"Custom Order for {cat_var}", options=plot_data[cat_var].dropna().unique().tolist(), default=sorted(plot_data[cat_var].dropna().unique().tolist()))
-                        if custom_order: plot_data[cat_var] = pd.Categorical(plot_data[cat_var], categories=custom_order, ordered=True)
+                        custom_order = order_select(f"Custom Order for {cat_var}", cat_var, plot_data[cat_var])
+                        if custom_order: plot_data[cat_var] = ordered_categories(plot_data[cat_var], custom_order)
                     else:
                         heatmap_numeric = [c for c in numeric_cols if c in plot_data.columns]
                         heatmap_cols = st.multiselect("Numeric Columns", heatmap_numeric, default=heatmap_numeric,
@@ -1675,7 +1704,7 @@ def visualization():
 
                 is_categorical = False
                 if isinstance(plot_data[cat_var].dtype, pd.CategoricalDtype): is_categorical = True
-                elif plot_data[cat_var].dtype.name == 'object': is_categorical = True
+                elif is_text_like(plot_data[cat_var]): is_categorical = True
                 if not is_categorical:
                     st.warning(f"Selected X variable '{cat_var}' must be categorical or object type.")
                     return

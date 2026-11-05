@@ -20,9 +20,9 @@ def scatter_app(frame: pd.DataFrame, **viz) -> AppTest:
     app.session_state["current_numeric_cols"] = frame.select_dtypes(
         "number"
     ).columns.tolist()
-    app.session_state["current_categorical_cols"] = frame.select_dtypes(
-        "object"
-    ).columns.tolist()
+    app.session_state["current_categorical_cols"] = [
+        c for c in frame.columns if c not in app.session_state["current_numeric_cols"]
+    ]
     app.session_state["viz_state"] = {
         "plot_type": "scatter",
         "x": "a",

@@ -27,7 +27,7 @@ def visualization_page():
 def loaded_app(page, frame: pd.DataFrame, tracking: bool = False) -> AppTest:
     app = AppTest.from_function(page, default_timeout=30)
     numeric = frame.select_dtypes(include="number").columns.tolist()
-    categorical = frame.select_dtypes(include=["object", "category"]).columns.tolist()
+    categorical = [c for c in frame.columns if c not in numeric]
     app.session_state["raw_df"] = frame.copy()
     app.session_state["filtered_df"] = frame.copy()
     app.session_state["operations"] = []

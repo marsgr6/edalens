@@ -24,9 +24,9 @@ def viz_app(frame: pd.DataFrame, plot_type: str, **viz) -> AppTest:
     app.session_state["current_numeric_cols"] = frame.select_dtypes(
         "number"
     ).columns.tolist()
-    app.session_state["current_categorical_cols"] = frame.select_dtypes(
-        "object"
-    ).columns.tolist()
+    app.session_state["current_categorical_cols"] = [
+        c for c in frame.columns if c not in app.session_state["current_numeric_cols"]
+    ]
     app.session_state["viz_state"] = {
         "plot_type": plot_type,
         "x": None,
@@ -221,3 +221,17 @@ def test_waterfall_changes_follow_custom_order(aggregation, expected):
     frame["k"] = pd.Categorical(frame["k"], categories=["b", "a", "c"], ordered=True)
     changes = pu.waterfall_frame(frame, "k", "y", aggregation)
     assert changes.index.tolist() == ["b", "a", "c"] and changes.tolist() == expected
+
+
+@pytest.mark.parametrize("plot", ["lineplot", "bars"])
+def test_time_is_here_accepts_text_dates_on_every_pandas(plot):
+    # pandas 3 stores text as dtype "str", not "object"; it must still count as dates text.
+    dates = pd.date_range("2024-01-01", periods=30, freq="D").strftime("%Y-%m-%d")
+    frame = pd.DataFrame({"date": dates, "kind": ["a", "b"] * 15, "v": np.arange(30.0)})
+    app = viz_app(frame, plot, x="date", y="v")
+    app.run()
+    next(c for c in app.checkbox if c.label == "Time is here").check()
+    app.run()
+    assert not app.exception
+    assert not [w.value for w in app.warning if "requires" in w.value]
+    assert len(chart(app)["data"][0]["x"]) == 30
