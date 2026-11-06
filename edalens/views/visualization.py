@@ -826,6 +826,9 @@ def visualization():
                             order = order_select(f"Custom Order for {label}: {axis_var}", axis_var, plot_data[axis_var])
                             plot_data[axis_var] = ordered_categories(plot_data[axis_var], order)
                             category_orders[axis_var] = order
+                    # Categories left out of a custom order are left out of the plot.
+                    for axis_var in category_orders:
+                        plot_data = plot_data[plot_data[axis_var].notna()]
 
                 point_mode = 'all' if swarm_points else False
                 jitter_val = 0.4
@@ -938,6 +941,12 @@ def visualization():
                 if single_var:
                     if orientation == 'v': fig.update_xaxes(showticklabels=False, title_text="", range=[-0.5, 0.5])
                     else: fig.update_yaxes(showticklabels=False, title_text="", range=[-0.5, 0.5])
+                elif cat_var in category_orders:
+                    # With a hue, each trace carries its own categories and Plotly would order the
+                    # axis by first appearance; pin it to the custom order.
+                    axis = dict(categoryorder="array", categoryarray=[c for c in category_orders[cat_var] if c in levels(plot_data[cat_var])])
+                    if orientation == 'v': fig.update_xaxes(**axis)
+                    else: fig.update_yaxes(**axis)
 
                 if facet_col_used or facet_row_used:
                     plot_kwargs = dict(data_frame=plot_data, color_discrete_sequence=PALETTE, width=800, height=600, category_orders=category_orders)
@@ -1519,6 +1528,9 @@ def visualization():
                             if c_order:
                                 plot_data[v_name] = ordered_categories(plot_data[v_name], c_order)
                                 category_orders[v_name] = c_order
+                    # Categories left out of a custom order are left out of the plot.
+                    for v_name in category_orders:
+                        plot_data = plot_data[plot_data[v_name].notna()]
 
                 if col != 'None' or row != 'None':
                     col_vals = levels(plot_data[col]) if col != 'None' else [None]

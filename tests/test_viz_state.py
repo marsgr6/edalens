@@ -163,3 +163,41 @@ def test_traces_and_panels_follow_the_custom_order():
     app.run()
     titles = [a["text"] for a in chart(app)["layout"]["annotations"]]
     assert titles == ["sex: M", "sex: F"]
+
+
+def category_axis(app: AppTest, axis: str = "xaxis") -> list:
+    return chart(app)["layout"].get(axis, {}).get("categoryarray")
+
+
+def test_boxes_and_violins_follow_the_x_order_with_a_hue():
+    # With a hue each trace carries its own X values; the axis must still use the custom order.
+    app = viz_app(plot_type="boxes", x="day", y="tip", color="sex")
+    app.run()
+    order_widget(app, "day").set_value(["Sun", "Sat", "Fri"])  # Thu left out.
+    app.run()
+    assert category_axis(app) == ["Sun", "Sat", "Fri"]
+    xs = {x for t in chart(app)["data"] for x in t.get("x") or []}
+    assert xs == {"Sun", "Sat", "Fri"}
+    next(s for s in app.selectbox if s.label == "Plot Type").set_value("violin")
+    app.run()
+    assert not app.exception
+    assert category_axis(app) == ["Sun", "Sat", "Fri"]
+
+
+def test_horizontal_boxes_follow_the_y_order():
+    app = viz_app(plot_type="boxes", x="tip", y="day", color="sex")
+    app.session_state["risk_it_all"] = True
+    app.run()
+    order_widget(app, "day").set_value(["Sun", "Sat", "Fri", "Thu"])
+    app.run()
+    assert not app.exception
+    assert category_axis(app, "yaxis") == ["Sun", "Sat", "Fri", "Thu"]
+
+
+def test_catplot_leaves_out_categories_removed_from_the_order():
+    app = viz_app(plot_type="catplot", x="day", y="tip", color="sex")
+    app.run()
+    order_widget(app, "day").set_value(["Sun", "Sat", "Fri"])
+    app.run()
+    xs = {x for t in chart(app)["data"] for x in t.get("x") or []}
+    assert xs == {"Sun", "Sat", "Fri"}
