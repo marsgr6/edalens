@@ -50,7 +50,7 @@ sidebar to allow any column in any role.
 
 | Plot | Use it for | Notable options |
 |---|---|---|
-| bars | Counts or values per category; raw time series as bars | Histogram vs raw-value mode, bars or heatmap |
+| bars | Y = None: rows counted per X (a count plot). Numeric Y: its total, mean, median, min, max or count per X (e.g. monthly kWh) | Show as counts/values or percent of total, within X or within color; grouped or stacked; value labels; error bars (SD or 95 % CI) for means; a date X (datetime or date text) on a time axis, grouped by week, month, quarter or year; bars or heatmap |
 | boxes | Distribution per group | Box or violin, swarm overlay, CI bands (68/95/99 %) |
 | lineplot | Trends across an ordered X | Mean/Sum aggregation, CI band, line style/width by column, “time is here” raw mode |
 | histogram | One numeric distribution | layer/dodge/stack, count/probability/percent/density, bars/step |

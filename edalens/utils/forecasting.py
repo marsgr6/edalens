@@ -102,7 +102,7 @@ def season_length(series: pd.Series, granularity: str = "None") -> Optional[int]
     if granularity in SEASON_BY_GRANULARITY:
         season = SEASON_BY_GRANULARITY[granularity]
     else:
-        code = pd.tseries.frequencies.to_offset(series.index.freq).name.split("-")[0]
+        code = pd.tseries.frequencies.to_offset(series.index.freq).rule_code.split("-")[0]
         season = SEASON_BY_FREQ.get(code)
     return season if season and len(series) >= 2 * season else None
 

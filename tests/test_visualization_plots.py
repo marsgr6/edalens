@@ -223,7 +223,7 @@ def test_waterfall_changes_follow_custom_order(aggregation, expected):
     assert changes.index.tolist() == ["b", "a", "c"] and changes.tolist() == expected
 
 
-@pytest.mark.parametrize("plot", ["lineplot", "bars"])
+@pytest.mark.parametrize("plot", ["lineplot"])
 def test_time_is_here_accepts_text_dates_on_every_pandas(plot):
     # pandas 3 stores text as dtype "str", not "object"; it must still count as dates text.
     dates = pd.date_range("2024-01-01", periods=30, freq="D").strftime("%Y-%m-%d")

@@ -69,7 +69,7 @@ def _item_editor(index: int, item, count: int) -> None:
                                  placeholder="What does this chart show?")
         with st.expander("Preview", expanded=False):
             if item.kind == PLOTLY:
-                st.plotly_chart(item.plotly_figure(), key=f"report_preview_{item.uid}", use_container_width=True)
+                st.plotly_chart(item.plotly_figure(), key=f"report_preview_{item.uid}")
             else:
                 st.image(base64.b64decode(item.png))
 
@@ -112,14 +112,14 @@ def report_page() -> None:
     current.created = datetime.now().isoformat(timespec="minutes")
     file_stem = _slug(current.title)
     actions = st.columns(4)
-    build_html = actions[0].button("🌐 Build HTML", use_container_width=True)
-    build_pdf = actions[1].button("📄 Build PDF", use_container_width=True, disabled=browser,
+    build_html = actions[0].button("🌐 Build HTML", width="stretch")
+    build_pdf = actions[1].button("📄 Build PDF", width="stretch", disabled=browser,
                                   help="Not available in browser mode (kaleido cannot run there)." if browser else None)
-    publish = actions[2].button("🔗 Publish link", use_container_width=True, disabled=browser,
+    publish = actions[2].button("🔗 Publish link", width="stretch", disabled=browser,
                                 help="Needs the app's server; not available in browser mode." if browser else
                                 "A page on this app's server, until it restarts.")
     report_dir = os.environ.get(REPORT_DIR_ENV)
-    send = actions[3].button("💾 Send to Python", use_container_width=True, disabled=not report_dir,
+    send = actions[3].button("💾 Send to Python", width="stretch", disabled=not report_dir,
                              help="Saves the report for app.report() in the notebook or script that "
                              "started the app." if report_dir else
                              "Only when the app was started from Python (edalens.walk or edalens.show).")

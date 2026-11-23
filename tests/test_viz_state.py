@@ -85,7 +85,9 @@ def test_x_y_and_hue_come_back_after_plots_that_cannot_use_them():
     assert mapping(app) == ("day", "tip", "sex")
     switch(app, "boxes")
     assert mapping(app) == ("day", "tip", "sex")
-    switch(app, "bars")  # Bars keeps Y for its "Time is here" mode.
+    switch(app, "bars")  # Bars start as a count plot.
+    assert mapping(app) == ("day", "None", "sex")
+    switch(app, "lineplot")  # ...and the Y choice comes back where a Y is needed.
     assert mapping(app) == ("day", "tip", "sex")
 
 

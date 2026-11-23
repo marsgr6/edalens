@@ -504,3 +504,182 @@ def waterfall_figure(
         xaxis=dict(type="category"), showlegend=False,
     )
     return fig
+
+
+BAR_AGGREGATIONS = ("Sum", "Mean", "Median", "Min", "Max", "Count")
+# Aggregations whose values add up, so shares of a total make sense.
+ADDITIVE_AGGREGATIONS = ("Sum", "Count")
+BAR_SCALES = ("Values", "Percent of total", "Percent within X", "Percent within color")
+BAR_ERRORS = ("None", "SD", "95% CI")
+_BAR_FUNCS = {"Sum": "sum", "Mean": "mean", "Median": "median", "Min": "min", "Max": "max", "Count": "count"}
+
+
+def bar_summary(
+    frame: pd.DataFrame,
+    x: str,
+    y: Optional[str] = None,
+    hue: Optional[str] = None,
+    facets: Sequence[Optional[str]] = (),
+    aggregation: str = "Sum",
+    scale: str = "Values",
+    error: str = "None",
+) -> pd.DataFrame:
+    """One row per bar: the grouping columns plus ``value`` (and ``error`` for means).
+
+    Without ``y`` the value is the number of rows (a count plot); with ``y`` it is
+    ``aggregation`` of ``y``. ``scale`` turns values into percentages of the total
+    of each facet panel, of each X, or of each color. Rows missing a grouping
+    value are left out.
+    """
+    panel = [f for f in facets if f]
+    keys = list(dict.fromkeys(k for k in [x, hue, *panel] if k))
+    data = frame.dropna(subset=keys)
+    grouped = data.groupby(keys, observed=True, sort=False)
+    if y is None:
+        summary = grouped.size().rename("value").reset_index()
+    else:
+        summary = grouped[y].agg(_BAR_FUNCS[aggregation]).rename("value").reset_index()
+        if aggregation == "Mean" and error != "None":
+            spread = grouped[y].agg(["std", "count"]).reset_index(drop=True)
+            if error == "SD":
+                summary["error"] = spread["std"].to_numpy()
+            else:
+                from scipy.stats import t
+
+                n = spread["count"].to_numpy()
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    summary["error"] = t.ppf(0.975, np.maximum(n - 1, 1)) * spread["std"].to_numpy() / np.sqrt(n)
+    if scale != "Values":
+        within = {
+            "Percent of total": panel,
+            "Percent within X": panel + [x],
+            "Percent within color": panel + ([hue] if hue else []),
+        }[scale]
+        within = list(dict.fromkeys(within))
+        totals = summary.groupby(within, observed=True)["value"].transform("sum") if within else summary["value"].sum()
+        summary["value"] = 100 * summary["value"] / totals
+    return summary
+
+
+# Bar labels: one size everywhere. Above grouped bars they stay horizontal while the
+# busiest panel row has at most this many bars, vertical beyond (no overlaps).
+BAR_LABEL_PX = 11
+HORIZONTAL_LABEL_MAX_BARS = 24
+
+
+def _bar_labels(fig, summary, x, hue, facet_col, facet_row, stacked, percent) -> None:
+    template = "%{y:.1f}%" if percent else "%{y:.4~g}"
+    if stacked:
+        # Inside each segment, all the same size; segments too small for it stay blank.
+        fig.update_traces(texttemplate=template, textposition="inside", insidetextanchor="middle", textangle=0)
+        fig.update_layout(uniformtext=dict(minsize=BAR_LABEL_PX - 2, mode="hide"))
+        return
+    # Bars in the busiest panel times panels per row: the width labels compete for.
+    panel = [c for c in (facet_col, facet_row) if c]
+    bars = summary.groupby(panel, observed=True).size().max() if panel else len(summary)
+    per_row = summary[facet_col].nunique() if facet_col else 1
+    vertical = bars * per_row > HORIZONTAL_LABEL_MAX_BARS
+    fig.update_traces(
+        texttemplate=template,
+        textposition="outside",
+        textangle=-90 if vertical else 0,
+        textfont_size=BAR_LABEL_PX,
+        constraintext="none",  # Never shrunk to the bar's width: the same size everywhere.
+        cliponaxis=False,
+    )
+    values = summary["value"] + (summary["error"].fillna(0) if "error" in summary else 0)
+    top, bottom = float(values.max()), float(summary["value"].min())
+    if bottom >= 0 and top > 0:  # Room above the tallest bar for its label.
+        fig.update_yaxes(range=[0, top * (1.16 if vertical else 1.08)])
+
+
+def bar_figure(
+    summary: pd.DataFrame,
+    x: str,
+    value_label: str,
+    hue: Optional[str] = None,
+    facet_col: Optional[str] = None,
+    facet_row: Optional[str] = None,
+    category_orders: Optional[dict] = None,
+    stacked: bool = False,
+    show_labels: bool = True,
+    percent: bool = False,
+    title: str = "",
+    palette: Sequence[str] = DEFAULT_PALETTE,
+    date_group: Optional[str] = None,
+) -> go.Figure:
+    """Bars from ``bar_summary`` output; a datetime X gets a date axis."""
+    fig = px.bar(
+        summary,
+        x=x,
+        y="value",
+        color=hue,
+        facet_col=facet_col,
+        facet_row=facet_row,
+        error_y="error" if "error" in summary else None,
+        barmode="relative" if stacked else "group",
+        category_orders=category_orders or {},
+        color_discrete_sequence=palette,
+        labels={"value": value_label},
+        title=title,
+        width=800,
+        height=600,
+    )
+    # px gives each color its own offsetgroup and aligns them across facet panels, so
+    # every panel reserves a slot for every color, even colors it does not show: with
+    # facets the bars get thin. Without those groups each panel splits its width among
+    # its own bars; stacking uses one shared group (side by side otherwise, even in
+    # "relative" mode).
+    fig.update_traces(offsetgroup="stack" if stacked else "", alignmentgroup="")
+    fig.update_layout(bargap=0.15, bargroupgap=0.05)
+    if show_labels:
+        _bar_labels(fig, summary, x, hue, facet_col, facet_row, stacked, percent)
+    if pd.api.types.is_datetime64_any_dtype(summary[x]):
+        if date_group in ("Week", "Month", "Year"):
+            fig.update_xaxes(tickformat=DATE_GROUPS[date_group][1])
+    elif not pd.api.types.is_numeric_dtype(summary[x]):
+        fig.update_xaxes(type="category")
+    return fig
+
+
+# "Group dates by" choices for a date X: pandas period frequency and axis label format.
+DATE_GROUPS = {
+    "As is": (None, None),
+    "Week": ("W", "%d %b %Y"),
+    "Month": ("M", "%b %Y"),
+    "Quarter": ("Q", None),
+    "Year": ("Y", "%Y"),
+}
+
+
+def date_values(values: pd.Series, dayfirst: bool = True) -> Optional[pd.Series]:
+    """``values`` as datetimes when they are dates (a datetime column, or text that
+    all parses as dates); None otherwise."""
+    if pd.api.types.is_datetime64_any_dtype(values):
+        return values
+    if pd.api.types.is_numeric_dtype(values) or pd.api.types.is_bool_dtype(values):
+        return None
+    present = values.dropna()
+    if present.empty:
+        return None
+    parsed = parse_dates(values.astype(object), dayfirst)
+    return parsed if parsed[present.index].notna().all() else None
+
+
+def group_dates(dates: pd.Series, by: str) -> pd.Series:
+    """Each date replaced by the start of its week, month, quarter or year."""
+    freq = DATE_GROUPS[by][0]
+    if freq is None:
+        return dates
+    return dates.dt.to_period(freq).dt.start_time
+
+
+def date_labels(dates: pd.Series, by: str) -> pd.Series:
+    """Readable labels for grouped dates (for heatmap rows)."""
+    if by == "Quarter":
+        return dates.dt.year.astype(str) + " Q" + dates.dt.quarter.astype(str)
+    fmt = DATE_GROUPS[by][1]
+    if fmt is None:
+        has_time = (dates.dropna() != dates.dropna().dt.normalize()).any()
+        fmt = "%Y-%m-%d %H:%M" if has_time else "%Y-%m-%d"
+    return dates.dt.strftime(fmt)

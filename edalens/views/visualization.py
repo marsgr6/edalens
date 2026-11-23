@@ -13,8 +13,9 @@ from scipy.stats import t
 from edalens.utils.data_processing import parse_dates
 from edalens.utils.ui import plotly_chart, start_charts
 from edalens.utils.plot_utils import (
+    ADDITIVE_AGGREGATIONS, BAR_AGGREGATIONS, BAR_ERRORS, BAR_SCALES, DATE_GROUPS,
     CANDLE_SOURCES, FIT_METHODS, HEATMAP_ROW_ORDERS, HEATMAP_SCALINGS, MARGINAL_KINDS,
-    candlestick_figure, numeric_heatmap_figure, ohlc_frame, regression_figure,
+    bar_figure, bar_summary, candlestick_figure, date_labels, date_values, group_dates, numeric_heatmap_figure, ohlc_frame, regression_figure,
     waterfall_figure, waterfall_frame,
 )
 
@@ -39,6 +40,30 @@ def text_columns(frame, include_bool=False) -> list:
         c for c in frame.columns
         if is_text_like(frame[c]) or (include_bool and pd.api.types.is_bool_dtype(frame[c].dtype))
     ]
+
+
+_CALENDARS = [
+    [m.lower() for m in ("January", "February", "March", "April", "May", "June", "July",
+                         "August", "September", "October", "November", "December")],
+    [d.lower() for d in ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")],
+]
+
+
+def natural_sort(values: list) -> list:
+    """Month and weekday names in calendar order (Jan, February, mon...); others sorted."""
+    names = [str(v).strip().lower().rstrip(".") for v in values]
+    for calendar in _CALENDARS:
+        rank = {}
+        for i, full in enumerate(calendar):
+            rank[full] = rank[full[:3]] = i
+            if full == "september":
+                rank["sept"] = i
+        if names and all(n in rank for n in names):
+            return [v for _, v in sorted(zip((rank[n] for n in names), values), key=lambda pair: pair[0])]
+    try:
+        return sorted(values)
+    except TypeError:  # Mixed types.
+        return sorted(values, key=str)
 
 
 def levels(values) -> list:
@@ -101,8 +126,9 @@ def visualization():
     if "viz_state" not in st.session_state:
         st.session_state.viz_state = {
             "plot_type": "bars",
-            "x": numeric_cols[0] if numeric_cols else (categorical_cols[0] if categorical_cols else None),
-            "y": numeric_cols[1] if len(numeric_cols) > 1 else (numeric_cols[0] if numeric_cols else None),
+            # Bars open as a count plot of the first categorical column (Y = None).
+            "x": categorical_cols[0] if categorical_cols else (numeric_cols[0] if numeric_cols else None),
+            "y": "None",
             "color": "None",
             "facet_col": "None",
             "facet_row": "None",
@@ -119,6 +145,8 @@ def visualization():
         else:
             if plot in ['bars', 'boxes', 'catplot', 'lineplot', 'heatmap', 'waterfall', 'candlestick']:
                 x_opts = categorical_cols.copy() if categorical_cols else data.columns.tolist()
+                if plot == 'bars':  # Datetime columns too: bars can group dates by month, year...
+                    x_opts += [c for c in data.columns if pd.api.types.is_datetime64_any_dtype(data[c]) and c not in x_opts]
             else:  # scatter, histogram, density 1/2, regression, ridges
                 x_opts = numeric_cols.copy() if numeric_cols else data.columns.tolist()
             if plot == 'ridges':
@@ -129,7 +157,7 @@ def visualization():
         y_opts = y_opts or data.columns.tolist()
         if plot in ['boxes', 'heatmap']:
             x_opts = ['None'] + [c for c in x_opts if c != 'None']
-        if plot == 'bars':  # Y is used only in "Time is here" mode.
+        if plot == 'bars':  # Y None: count rows per X; a numeric Y: aggregate it.
             y_opts = ['None'] + [c for c in y_opts if c != 'None']
         if plot in ['histogram', 'density 1']:
             y_opts = ['None']
@@ -162,13 +190,13 @@ def visualization():
 
         x_fallback = "None" if new_plot == "heatmap" else next((c for c in x_opts if c != "None"), "None")
         state["x"] = pick(x_opts, [*memory["x"], *memory["y"]], x_fallback)
-        if new_plot in ['histogram', 'density 1']:
+        if new_plot in ['histogram', 'density 1', 'bars']:
+            # No Y (bars start as a count plot; pick a numeric Y to aggregate it).
             state["y"] = "None"
         else:
             # Two-variable plots need a Y other than X when there is one.
             y_candidates = [c for c in [*memory["y"], *memory["x"]] if c != state["x"]]
-            y_fallback = "None" if new_plot == "bars" else next(
-                (c for c in y_opts if c not in ("None", state["x"])), y_opts[0])
+            y_fallback = next((c for c in y_opts if c not in ("None", state["x"])), y_opts[0])
             state["y"] = pick(y_opts, y_candidates, y_fallback)
         st.session_state["viz_auto"] = {"x": state["x"], "y": state["y"]}
 
@@ -190,10 +218,7 @@ def visualization():
         store = st.session_state["category_orders"]
         present = list(pd.unique(values.dropna()))
         if sort:
-            try:
-                present = sorted(present)
-            except TypeError:  # Mixed types.
-                present = sorted(present, key=str)
+            present = natural_sort(present)
         saved = store.get(var)
         if saved:
             default = [v for v in saved["order"] if v in present]
@@ -363,7 +388,7 @@ def visualization():
             corr_matrix = data_c.select_dtypes(include=np.number).corr()
             fig = px.imshow(corr_matrix, text_auto=True, color_continuous_scale='Viridis', 
                            title="Correlation Matrix", width=800, height=600)
-            plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig)
 
         elif plot_type == "clustermap":
             with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
@@ -408,7 +433,7 @@ def visualization():
                 yaxis=dict(showticklabels=True),
                 showlegend=False
             )
-            plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig)
 
         elif plot_type == "pairplot":
             numeric_cols_list = list(data.select_dtypes(include='number').columns)
@@ -505,7 +530,7 @@ def visualization():
                     fig.update_xaxes(range=x_range, row=i+1, col=j+1)
                     fig.update_yaxes(range=y_range, row=i+1, col=j+1)
 
-            plotly_chart(fig, use_container_width=True)
+            plotly_chart(fig)
 
         elif plot_type == "missingno":
             with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
@@ -524,7 +549,7 @@ def visualization():
                     color_continuous_scale="viridis", range_color=[0, 1], aspect='auto', width=1000, height=600
                 )
                 fig.update_layout(title="Missing Data Matrix (1 = Present, 0 = Missing)")
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif tplot == "bars":
                 mapped_data = data.notnull().astype(int)
@@ -547,7 +572,7 @@ def visualization():
                 )
                 fig.update_traces(textposition='outside')
                 fig.update_layout(xaxis_title="Variables", yaxis_title="Count of Non-Missing Values", margin=dict(l=80, r=20, t=50, b=150), xaxis_tickangle=45)
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif tplot == "heatmap":
                 from scipy.spatial.distance import squareform
@@ -579,7 +604,7 @@ def visualization():
                     zmin=0, zmax=1, title="Lower Triangular Missingness Correlation Clustermap", width=800, height=800
                 )
                 fig.update_layout(xaxis_title="Variables", yaxis_title="Variables", xaxis_side="bottom", yaxis_autorange="reversed")
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif tplot == "dendrogram":
                 import plotly.figure_factory as ff
@@ -626,147 +651,106 @@ def visualization():
                     yaxis=dict(domain=[0, 0.7], tickmode='array', tickvals=list(range(len(ordered_columns))), ticktext=ordered_columns[::-1], autorange='reversed'),
                     xaxis2=dict(domain=[0, 0.2]), yaxis2=dict(domain=[0.7, 1]), margin=dict(l=100, t=50, b=100)
                 )
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
         # Interactive plot types
         else:
             if plot_type == 'bars':
+                # Y decides the plot: none -> rows counted per X (a count plot); a numeric
+                # column -> that column aggregated per X (e.g. monthly kWh).
                 var_x = global_var_x
+                var_y = global_var_y
                 hue = global_hue
-                facet_col = global_facet_col if global_facet_col else 'None'
-                facet_row = global_facet_row if global_facet_row else 'None'
+                facet_col = global_facet_col
+                facet_row = global_facet_row
+                if var_y is not None and not pd.api.types.is_numeric_dtype(data[var_y]):
+                    st.warning(f"Bars need a numeric Y to aggregate; '{var_y}' is not numeric. "
+                               "Choose a numeric Y, or None to count rows.")
+                    return
 
                 with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
                     tplot = st.selectbox("Plot Type", ["bars", "heatmap"])
-                    bar_mode = st.selectbox("Bars Mode", ["Histogram", "Raw Values (height = value in order)"])
-                    time_series = st.checkbox("Time is here", value=False) if tplot == "bars" else False
-                    var_y = global_var_y if time_series else None
-                    
+                    if var_y is None:
+                        st.caption("Y is None: bars count the rows in each X category. "
+                                   "Pick a numeric Y to plot its values instead.")
+                        aggregation = "Count"
+                    else:
+                        aggregation = st.selectbox(
+                            f"Aggregate {var_y} per bar", BAR_AGGREGATIONS, index=0,
+                            help="Sum suits totals (monthly kWh); with one row per X it is the value itself.")
+                    scales = [s for s in BAR_SCALES if s != "Percent within color" or hue]
+                    if aggregation in ADDITIVE_AGGREGATIONS:
+                        scale = st.selectbox(
+                            "Show as", scales, index=0,
+                            format_func=lambda s: ("Counts" if var_y is None else "Values") if s == "Values" else s,
+                            help="Percentages are taken within each facet panel.")
+                    else:
+                        scale = "Values"
+                    error = st.selectbox("Error bars", BAR_ERRORS, index=0) if aggregation == "Mean" and tplot == "bars" else "None"
+                    stacked = st.radio("Bar layout", ["Grouped", "Stacked"], horizontal=True) == "Stacked" if (hue and tplot == "bars") else False
+                    show_labels = st.checkbox("Show values on bars", value=True) if tplot == "bars" else True
+
                     category_orders = {}
                     plot_data = data.copy()
+                    if hue is not None and hue != var_x: plot_data[hue] = plot_data[hue].astype(str)
+                    # A date X (datetime column, or text that is all dates) is plotted on a time
+                    # axis in date order, optionally grouped by week, month, quarter or year.
+                    x_dates = date_values(plot_data[var_x])
+                    if x_dates is not None and not pd.api.types.is_datetime64_any_dtype(plot_data[var_x]):
+                        if not st.checkbox("Day First when X holds dates (e.g., 31/12/2023)", value=True):
+                            x_dates = date_values(plot_data[var_x], dayfirst=False)
+                    date_group = None
+                    if x_dates is not None:
+                        date_group = st.selectbox(f"Group dates in {var_x} by", list(DATE_GROUPS), index=0,
+                                                  help="Month on daily readings gives monthly totals (Sum) or averages (Mean).")
+                        plot_data[var_x] = group_dates(x_dates, date_group)
+                    for v_name, label in [(var_x, 'X'), (hue, 'Hue'), (facet_col, 'Col'), (facet_row, 'Row')]:
+                        if v_name == var_x and x_dates is not None:
+                            continue
+                        if v_name and v_name in plot_data.columns and is_text_like(plot_data[v_name]) and v_name not in category_orders:
+                            c_order = order_select(f"Custom Order for {label}: {v_name}", v_name, plot_data[v_name])
+                            plot_data[v_name] = ordered_categories(plot_data[v_name], c_order)
+                            category_orders[v_name] = c_order
 
-                    if hue is not None: plot_data[hue] = plot_data[hue].astype(str)
-
-                    if var_x in plot_data.columns and is_text_like(plot_data[var_x]):
-                        custom_order_x = order_select(f"Custom Order for X: {var_x}", var_x, plot_data[var_x])
-                        plot_data[var_x] = ordered_categories(plot_data[var_x], custom_order_x)
-                        category_orders[var_x] = custom_order_x
-
-                    if hue and hue != 'None' and hue in plot_data.columns and is_text_like(plot_data[hue]):
-                        custom_order_hue = order_select(f"Custom Order for Hue: {hue}", hue, plot_data[hue])
-                        plot_data[hue] = ordered_categories(plot_data[hue], custom_order_hue)
-                        category_orders[hue] = custom_order_hue
-
-                    if facet_col != 'None' and facet_col in plot_data.columns and is_text_like(plot_data[facet_col]):
-                        custom_order_col = order_select(f"Custom Order for Col: {facet_col}", facet_col, plot_data[facet_col])
-                        plot_data[facet_col] = ordered_categories(plot_data[facet_col], custom_order_col)
-                        category_orders[facet_col] = custom_order_col
-
-                    if facet_row != 'None' and facet_row in plot_data.columns and is_text_like(plot_data[facet_row]):
-                        custom_order_row = order_select(f"Custom Order for Row: {facet_row}", facet_row, plot_data[facet_row])
-                        plot_data[facet_row] = ordered_categories(plot_data[facet_row], custom_order_row)
-                        category_orders[facet_row] = custom_order_row
+                percent = scale != "Values"
+                summary = bar_summary(plot_data, var_x, var_y, hue, (facet_col, facet_row), aggregation, scale, error)
+                if summary.empty:
+                    st.warning("No rows have values for the chosen X, color and facets.")
+                    return
+                if percent:
+                    value_label = f"{scale} (%)"
+                elif var_y is None:
+                    value_label = "Count"
+                else:
+                    value_label = f"{aggregation} of {var_y}"
+                what = "Rows" if var_y is None else f"{aggregation} of {var_y}"
+                by_x = f"{var_x} ({date_group.lower()})" if date_group and date_group != "As is" else var_x
+                title = f"{what} by {by_x}" + (f" and {hue}" if hue and hue != var_x else "") + (f" · {scale}" if percent else "")
 
                 if tplot == "bars":
-                    if time_series:
-                        if var_y is None:
-                            st.warning("Please select a Y variable in the Mapping Zones for Time Series mode.")
-                            return
-
-                        is_object = False
-                        if isinstance(plot_data[var_x].dtype, pd.CategoricalDtype):
-                            if is_text_like(plot_data[var_x].cat.categories): is_object = True
-                        else:
-                            if is_text_like(plot_data[var_x]): is_object = True
-
-                        if not is_object:
-                            st.warning(f"Time series mode requires '{var_x}' to be an object column (e.g., dates).")
-                            return
-
-                        if not pd.api.types.is_numeric_dtype(plot_data[var_y]):
-                            st.warning(f"Time series mode requires '{var_y}' to be a numerical column.")
-                            return
-
-                        facet_col_vals = levels(plot_data[facet_col]) if facet_col != 'None' else [None]
-                        facet_row_vals = levels(plot_data[facet_row]) if facet_row != 'None' else [None]
-
-                        n_cols = max(len(facet_col_vals), 1)
-                        n_rows = max(len(facet_row_vals), 1)
-
-                        fig = make_subplots(
-                            rows=n_rows, cols=n_cols, shared_yaxes=True, shared_xaxes=True,
-                            horizontal_spacing=0.1, vertical_spacing=0.12,
-                            subplot_titles=[
-                                f"{facet_row}: {r} | {facet_col}: {c}" if facet_row != 'None' and facet_col != 'None' else
-                                f"{facet_col}: {c}" if facet_col != 'None' else
-                                f"{facet_row}: {r}" if facet_row != 'None' else ""
-                                for r in facet_row_vals for c in facet_col_vals
-                            ]
-                        )
-
-                        hue_values = levels(plot_data[hue]) if hue is not None else [None]
-                        color_map = {hv: PALETTE[idx % len(PALETTE)] for idx, hv in enumerate(hue_values)}
-
-                        for i_row, row_val in enumerate(facet_row_vals):
-                            for i_col, col_val in enumerate(facet_col_vals):
-                                row_idx = i_row + 1
-                                col_idx = i_col + 1
-                                sub_data = plot_data.copy()
-                                if facet_row != 'None': sub_data = sub_data[sub_data[facet_row] == row_val]
-                                if facet_col != 'None': sub_data = sub_data[sub_data[facet_col] == col_val]
-
-                                if sub_data.empty: continue
-
-                                for hue_val in hue_values:
-                                    subset = sub_data.copy()
-                                    if hue_val is not None: subset = subset[subset[hue] == hue_val]
-                                    if subset.empty: continue
-
-                                    fig.add_trace(
-                                        go.Bar(
-                                            x=subset[var_x], y=subset[var_y], name=str(hue_val) if hue_val else "Bars",
-                                            marker_color=color_map[hue_val], showlegend=(row_idx == 1 and col_idx == 1)
-                                        ), row=row_idx, col=col_idx
-                                    )
-
-                        fig.update_layout(width=800, height=600, title=f"Time Series Bar Plot: {var_y} vs {var_x}", xaxis_title=var_x, yaxis_title=var_y, legend_title=hue, showlegend=True, barmode='group')
-
-                    else:
-                        if bar_mode == "Histogram":
-                            fig = px.histogram(
-                                plot_data, x=var_x, color=hue, barmode='group',
-                                facet_col=facet_col if facet_col != 'None' else None,
-                                facet_row=facet_row if facet_row != 'None' else None,
-                                color_discrete_sequence=PALETTE, category_orders=category_orders, width=800, height=600
-                            )
-                            fig.update_traces(texttemplate='%{y}', textposition='auto')
-                        else:
-                            df_plot = plot_data.reset_index()
-                            x_axis = 'index'
-                            y_axis = var_x
-                            fig = px.bar(
-                                df_plot, x=x_axis, y=y_axis, color=hue,
-                                facet_col=facet_col if facet_col != 'None' else None,
-                                facet_row=facet_row if facet_row != 'None' else None,
-                                color_discrete_sequence=PALETTE, category_orders=category_orders, width=800, height=600
-                            )
-                            fig.update_layout(xaxis_title="Index", yaxis_title=y_axis)
-
+                    fig = bar_figure(summary, var_x, value_label, hue=hue, facet_col=facet_col, facet_row=facet_row,
+                                     category_orders=category_orders, stacked=stacked, show_labels=show_labels,
+                                     percent=percent, title=title, palette=PALETTE, date_group=date_group)
                 else:
-                    if hue is not None and var_x is not None:
-                        if pd.api.types.is_numeric_dtype(plot_data[var_x]): plot_data[var_x] = pd.cut(plot_data[var_x], bins=10)
-                        if pd.api.types.is_numeric_dtype(plot_data[hue]): plot_data[hue] = pd.cut(plot_data[hue], bins=10)
-                        df_2dhist = pd.crosstab(plot_data[var_x], plot_data[hue])
-                        fig = px.imshow(
-                            df_2dhist, text_auto='.0f', color_continuous_scale='Viridis', title=f"Heatmap: {hue} vs {var_x}", width=800, height=600
-                        )
-                        fig.update_xaxes(title=hue)
-                        fig.update_yaxes(title=var_x)
-                    else:
-                        st.warning("You must select both X and Hue variables to create a heatmap.")
+                    if hue is None or hue == var_x:
+                        st.warning("Choose a Color (hue) other than X: the heatmap crosses X with it.")
                         return
+                    if date_group:  # Readable row labels in date order.
+                        summary = summary.sort_values(var_x)
+                        labels = date_labels(summary[var_x], date_group)
+                        category_orders[var_x] = list(dict.fromkeys(labels))
+                        summary[var_x] = labels
+                    table = summary.pivot_table(index=var_x, columns=hue, values="value", aggfunc="sum", observed=True)
+                    for axis_name, var in (("index", var_x), ("columns", hue)):
+                        if var in category_orders:
+                            keep = [c for c in category_orders[var] if c in getattr(table, axis_name)]
+                            table = table.reindex(**{axis_name: keep})
+                    fig = px.imshow(table, text_auto='.1f' if percent else '.4~g', color_continuous_scale='Viridis',
+                                    labels=dict(color=value_label), title=title, width=800, height=600, aspect="auto")
+                    fig.update_xaxes(title=hue, type="category")
+                    fig.update_yaxes(title=var_x, type="category")
 
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif plot_type == 'boxes':
                 var_x_used = global_var_x
@@ -961,7 +945,7 @@ def visualization():
                             ys = trace.y if orientation == 'v' else trace.x
                             if ys is not None and len(ys) > 0: trace.update(spanmode='manual', span=[min(ys), max(ys)])
 
-                plotly_chart(fig, use_container_width=(not single_var))
+                plotly_chart(fig, width="content" if single_var else "stretch")
 
             elif plot_type == 'lineplot':
                 var_x = global_var_x
@@ -1103,7 +1087,7 @@ def visualization():
                         for j in range(1, n_cols + 1):
                             fig.update_xaxes(title_text=var_x, row=i, col=j, showticklabels=True)
                             fig.update_yaxes(title_text=f"{aggregation_method} of {var_y}", row=i, col=j, showticklabels=True)
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif plot_type == 'ridges':
                 var_x = global_var_x
@@ -1188,7 +1172,7 @@ def visualization():
 
                     fig.update_layout(title=f"Ridge Plot Faceted by {var_y}", width=900, height=max(300, n_rows * height), showlegend=True)
                     fig.update_xaxes(title=var_x, row=n_rows, col=1)
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif plot_type == 'histogram':
                 var_x = global_var_x
@@ -1227,7 +1211,7 @@ def visualization():
                         barmode=barmode, histnorm=stat if stat != "count" else None, cumulative=cumulative,
                         category_orders=category_orders, color_discrete_sequence=PALETTE, width=800, height=600
                     )
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif plot_type in ["density 1", "density 2"]:
                 var_x = global_var_x
@@ -1351,7 +1335,7 @@ def visualization():
                             except Exception: continue
 
                     fig.update_layout(title=f"Density Plot of {var_x}", width=900, height=300 * max(n_rows, 1), showlegend=True)
-                    plotly_chart(fig, use_container_width=True)
+                    plotly_chart(fig)
 
                 else:
                     if kind == "hist":
@@ -1416,7 +1400,7 @@ def visualization():
                                         )
                                     fig.add_trace(trace)
 
-                    plotly_chart(fig, use_container_width=True)
+                    plotly_chart(fig)
 
 
             elif plot_type == 'scatter':
@@ -1505,7 +1489,7 @@ def visualization():
                     fig.update_layout(scene=dict(xaxis_title=var_x, yaxis_title=var_y, zaxis_title=var_z), margin=dict(l=0, r=0, t=40, b=0))
                 else:
                     fig = px.scatter(**scatter_kwargs)
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif plot_type == 'catplot':
                 var_x = global_var_x
@@ -1587,7 +1571,7 @@ def visualization():
                     else: fig.update_traces(marker=dict(size=global_point_size))
                     if kind == "swarm": fig.update_traces(jitter=0.3)
 
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif plot_type == 'regression':
                 var_x = global_var_x
@@ -1624,7 +1608,7 @@ def visualization():
                 except ValueError as exc:
                     st.warning(str(exc))
                     return
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif plot_type in ('candlestick', 'waterfall'):
                 var_x = global_var_x
@@ -1670,7 +1654,7 @@ def visualization():
                 if fig.data[0].x is None or not len(fig.data[0].x):
                     st.warning(f"No data to plot: {var_x} and {var_y} have no complete rows.")
                     return
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
             elif plot_type == 'heatmap':
                 cat_var = global_var_x if global_var_x != 'None' else None
@@ -1707,7 +1691,7 @@ def visualization():
                     except ValueError as exc:
                         st.warning(str(exc))
                         return
-                    plotly_chart(fig, use_container_width=True)
+                    plotly_chart(fig)
                     return
 
                 if num_var is None or not pd.api.types.is_numeric_dtype(plot_data[num_var]):
@@ -1730,7 +1714,7 @@ def visualization():
 
                 fig = px.imshow(heatmap_data, labels=dict(x="Observations", y=cat_var, color="Value"), x=x_labels, y=y_labels, color_continuous_scale=colormap, title=title, width=800, height=height, aspect='auto')
                 fig.update_layout(margin=dict(l=50, r=50, t=100, b=50), yaxis=dict(tickfont=dict(size=10)))
-                plotly_chart(fig, use_container_width=True)
+                plotly_chart(fig)
 
     if not data.empty:
         render_plot()
