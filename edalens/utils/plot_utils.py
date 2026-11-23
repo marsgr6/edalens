@@ -683,3 +683,93 @@ def date_labels(dates: pd.Series, by: str) -> pd.Series:
         has_time = (dates.dropna() != dates.dropna().dt.normalize()).any()
         fmt = "%Y-%m-%d %H:%M" if has_time else "%Y-%m-%d"
     return dates.dt.strftime(fmt)
+
+
+HISTOGRAM_STATS = ("count", "probability", "percent", "density")
+MAX_STEP_BINS = 60
+
+
+def step_histogram_frame(
+    frame: pd.DataFrame,
+    x: str,
+    hue: Optional[str] = None,
+    facets: Sequence[Optional[str]] = (),
+    stat: str = "count",
+    cumulative: bool = False,
+    stacked: bool = False,
+) -> pd.DataFrame:
+    """Outline points of a step histogram: one closed step line per group.
+
+    All groups share the same bins (numpy's "auto" rule, at most MAX_STEP_BINS),
+    so their outlines are comparable. Each group is normalized by its own size,
+    like Plotly's histnorm. ``stacked`` adds each color on top of the previous
+    ones (in color order) within a panel.
+    """
+    values = pd.to_numeric(frame[x], errors="coerce").dropna()
+    if values.empty:
+        return pd.DataFrame(columns=[x, "value"])
+    edges = np.histogram_bin_edges(values, bins="auto")
+    if len(edges) - 1 > MAX_STEP_BINS:
+        edges = np.histogram_bin_edges(values, bins=MAX_STEP_BINS)
+    widths = np.diff(edges)
+    panel = [f for f in facets if f]
+    keys = list(dict.fromkeys(k for k in [*panel, hue] if k))
+    data = frame.dropna(subset=keys)
+    groups = data.groupby(keys, observed=True, sort=False) if keys else [((), data)]
+    rows = []
+    for key, group in groups:
+        key = key if isinstance(key, tuple) else (key,)
+        counts, _ = np.histogram(pd.to_numeric(group[x], errors="coerce").dropna(), bins=edges)
+        n = counts.sum()
+        heights = counts.astype(float)
+        if stat in ("probability", "percent", "density") and n:
+            heights = heights / n
+        if cumulative:
+            heights = np.cumsum(heights)
+        elif stat == "density":
+            heights = heights / widths
+        if stat == "percent":
+            heights = heights * 100
+        rows.append((dict(zip(keys, key)), heights))
+    if stacked and hue:
+        running = {}
+        for labels, heights in rows:
+            panel_key = tuple(labels.get(f) for f in panel)
+            base = running.get(panel_key, np.zeros_like(heights))
+            heights += base
+            running[panel_key] = heights.copy()
+    out = []
+    for labels, heights in rows:
+        # A closed outline: up from zero at the first edge, across each bin, down at the last edge.
+        xs = np.concatenate([[edges[0]], edges[:-1], [edges[-1], edges[-1]]])
+        ys = np.concatenate([[0.0], heights, [heights[-1], 0.0]])
+        part = pd.DataFrame({x: xs, "value": ys})
+        for column, value in labels.items():
+            part[column] = value
+        out.append(part)
+    return pd.concat(out, ignore_index=True)
+
+
+def fill_steps(fig: go.Figure, alpha: float) -> go.Figure:
+    """Fill each closed step outline with its own line color at ``alpha`` (0: outline only)."""
+    if alpha > 0:
+        for trace in fig.data:
+            trace.update(fill="toself", fillcolor=_rgba(trace.line.color, alpha))
+    return fig
+
+
+# Histogram "Multiple" choices (seaborn's names) and Plotly's barmode for each.
+HISTOGRAM_MULTIPLE = {"layer": "overlay", "dodge": "group", "stack": "stack"}
+
+
+def histogram_bars(fig: go.Figure, multiple: str, opacity: float) -> go.Figure:
+    """Lay out px.histogram bars as ``multiple`` says, at ``opacity``.
+
+    px gives each color its own offsetgroup, which puts the colors side by side
+    in every barmode: "layer" never overlapped and "stack" never stacked. Layer
+    and stack share one group; dodge groups only the colors within each panel.
+    """
+    shared = multiple in ("layer", "stack")
+    fig.update_traces(offsetgroup="hist" if shared else "", alignmentgroup="", opacity=opacity)
+    fig.update_layout(barmode=HISTOGRAM_MULTIPLE[multiple])
+    return fig

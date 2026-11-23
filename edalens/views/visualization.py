@@ -15,7 +15,8 @@ from edalens.utils.ui import plotly_chart, start_charts
 from edalens.utils.plot_utils import (
     ADDITIVE_AGGREGATIONS, BAR_AGGREGATIONS, BAR_ERRORS, BAR_SCALES, DATE_GROUPS,
     CANDLE_SOURCES, FIT_METHODS, HEATMAP_ROW_ORDERS, HEATMAP_SCALINGS, MARGINAL_KINDS,
-    bar_figure, bar_summary, candlestick_figure, date_labels, date_values, group_dates, numeric_heatmap_figure, ohlc_frame, regression_figure,
+    bar_figure, bar_summary, candlestick_figure, date_labels, date_values, group_dates,
+    fill_steps, histogram_bars, step_histogram_frame, numeric_heatmap_figure, ohlc_frame, regression_figure,
     waterfall_figure, waterfall_frame,
 )
 
@@ -1184,10 +1185,13 @@ def visualization():
                     multiple = st.selectbox("Multiple", ["layer", "dodge", "stack"])
                     stat = st.selectbox("Stat", ["count", "probability", "percent", "density"])
                     element = st.selectbox("Element", ["bars", "step"])
+                    fill_alpha = st.slider("Fill opacity", 0.0, 1.0, 0.3, 0.05,
+                                           help="Fill under each step outline; 0 draws the outline only.") if element == "step" else 0.0
+                    bar_opacity = st.slider("Bar opacity", 0.1, 1.0, 0.6 if multiple == "layer" else 1.0, 0.05,
+                                            help="Below 1, layered colors show through each other.") if element == "bars" else 1.0
                     common_norm = st.checkbox("Common Norm", value=False)
                     cumulative = st.checkbox("Cumulative", value=False)
                     
-                    barmode = 'overlay' if multiple == 'layer' else multiple
                     plot_data = data.copy()
                     if hue_var != "None" and hue_var in plot_data.columns: plot_data[hue_var] = plot_data[hue_var].astype(str)
 
@@ -1199,18 +1203,31 @@ def visualization():
                             category_orders[v_name] = c_order
 
                 if element == "step":
-                    fig = go.Figure()
-                    for hue_val in levels(plot_data[hue_var]) if hue_var != "None" else [None]:
-                        subset = plot_data[plot_data[hue_var] == hue_val] if hue_var != "None" else plot_data
-                        fig.add_trace(go.Histogram(x=subset[var_x], histnorm=stat if stat != "count" else None, cumulative_enabled=cumulative, opacity=0.75 if multiple == 'layer' else 1.0, name=str(hue_val) if hue_val is not None else var_x))
-                    fig.update_layout(barmode=barmode, width=800, height=600, title="Step Histogram", xaxis_title=var_x, yaxis_title=stat.capitalize(), showlegend=True)
+                    # Outlines on shared bins, in the app's palette and color order, with facets.
+                    hue_used = hue_var if hue_var != "None" else None
+                    steps = step_histogram_frame(
+                        plot_data, var_x, hue_used,
+                        (facet_col if facet_col != "None" else None, facet_row if facet_row != "None" else None),
+                        stat=stat, cumulative=cumulative, stacked=multiple == "stack",
+                    )
+                    fig = px.line(
+                        steps, x=var_x, y="value", color=hue_used, line_shape="hv",
+                        facet_col=facet_col if facet_col != "None" else None, facet_row=facet_row if facet_row != "None" else None,
+                        category_orders=category_orders, color_discrete_sequence=PALETTE, width=800, height=600,
+                        labels={"value": stat.capitalize()}, title=f"Step histogram of {var_x}",
+                    )
+                    fig.update_traces(line_width=2)
+                    fill_steps(fig, fill_alpha)
+                    if multiple == "dodge":
+                        st.caption("Step outlines are drawn on top of each other; dodge applies to bars.")
                 else:
                     fig = px.histogram(
                         plot_data, x=var_x, color=hue_var if hue_var != "None" else None,
                         facet_col=facet_col if facet_col != "None" else None, facet_row=facet_row if facet_row != "None" else None,
-                        barmode=barmode, histnorm=stat if stat != "count" else None, cumulative=cumulative,
+                        histnorm=stat if stat != "count" else None, cumulative=cumulative,
                         category_orders=category_orders, color_discrete_sequence=PALETTE, width=800, height=600
                     )
+                    histogram_bars(fig, multiple, bar_opacity)
                 plotly_chart(fig)
 
             elif plot_type in ["density 1", "density 2"]:
