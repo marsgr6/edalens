@@ -223,15 +223,49 @@ def test_waterfall_changes_follow_custom_order(aggregation, expected):
     assert changes.index.tolist() == ["b", "a", "c"] and changes.tolist() == expected
 
 
-@pytest.mark.parametrize("plot", ["lineplot"])
-def test_time_is_here_accepts_text_dates_on_every_pandas(plot):
-    # pandas 3 stores text as dtype "str", not "object"; it must still count as dates text.
-    dates = pd.date_range("2024-01-01", periods=30, freq="D").strftime("%Y-%m-%d")
-    frame = pd.DataFrame({"date": dates, "kind": ["a", "b"] * 15, "v": np.arange(30.0)})
-    app = viz_app(frame, plot, x="date", y="v")
+def trading_days(freq: str = "B") -> pd.DataFrame:
+    days = pd.date_range("2025-01-01", periods=30, freq=freq)
+    rng = np.random.default_rng(2)
+    close = 100 + np.cumsum(rng.normal(0, 1, len(days)))
+    return pd.DataFrame(
+        {
+            "date": days.strftime("%Y-%m-%d"),
+            "Open": close - 0.5,
+            "High": close + 1,
+            "Low": close - 1,
+            "Close": close,
+        }
+    )
+
+
+def candle_checkbox(app: AppTest):
+    return next((c for c in app.checkbox if c.label == "Hide weekend gaps"), None)
+
+
+def test_trading_days_hide_weekend_gaps_by_default():
+    app = viz_app(trading_days(), "candlestick", x="date", y="Close")
     app.run()
-    next(c for c in app.checkbox if c.label == "Time is here").check()
+    next(r for r in app.radio if r.label == "Candles from").set_value(
+        "Open/High/Low/Close columns"
+    )
     app.run()
     assert not app.exception
-    assert not [w.value for w in app.warning if "requires" in w.value]
-    assert len(chart(app)["data"][0]["x"]) == 30
+    assert candle_checkbox(app).value is True
+    breaks = chart(app)["layout"]["xaxis"]["rangebreaks"]
+    assert breaks == [{"bounds": ["sat", "mon"]}]
+    candle_checkbox(app).uncheck()
+    app.run()
+    assert "rangebreaks" not in chart(app)["layout"]["xaxis"]
+
+
+def test_weekend_rows_keep_the_weekends_by_default():
+    app = viz_app(trading_days("D"), "candlestick", x="date", y="Close")
+    app.run()
+    assert candle_checkbox(app).value is False  # Hiding would drop weekend candles.
+    assert "rangebreaks" not in chart(app)["layout"]["xaxis"]
+
+
+def test_no_weekend_option_for_text_steps():
+    app = viz_app(prices(), "candlestick", x="month", y="price")
+    app.run()
+    assert candle_checkbox(app) is None

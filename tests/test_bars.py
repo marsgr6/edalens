@@ -97,7 +97,7 @@ def test_without_y_bars_count_rows_per_x():
     assert any("count the rows" in c.value for c in app.caption)
 
 
-def test_numeric_y_is_summed_per_x_and_replaces_time_is_here():
+def test_numeric_y_is_summed_per_x():
     app = bars_app(energy(), y="kwh")
     app.run()
     assert not app.exception

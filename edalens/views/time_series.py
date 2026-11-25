@@ -1127,7 +1127,7 @@ def time_series_analysis():
                         changepoints,
                         cp_table
 
-                    ) = run_prophet_changeppoints(
+                    ) = run_prophet_changepoints(
                         df_prophet,
                         changepoint_prior,
                         sensitivity,

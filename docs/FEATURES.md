@@ -52,7 +52,7 @@ sidebar to allow any column in any role.
 |---|---|---|
 | bars | Y = None: rows counted per X (a count plot). Numeric Y: its total, mean, median, min, max or count per X (e.g. monthly kWh) | Show as counts/values or percent of total, within X or within color; grouped or stacked; value labels; error bars (SD or 95 % CI) for means; a date X (datetime or date text) on a time axis, grouped by week, month, quarter or year; bars or heatmap |
 | boxes | Distribution per group | Box or violin, swarm overlay, CI bands (68/95/99 %) |
-| lineplot | Trends across an ordered X | Mean/Sum aggregation, CI band, line style/width by column, “time is here” raw mode |
+| lineplot | Trends across an ordered X | Mean/Median/Sum/Min/Max per X step or raw values; date X on a time axis (grouped by week/month/quarter/year); CI or SD as a band or error bars; line style/width by column |
 | histogram | One numeric distribution | layer/dodge/stack, count/probability/percent/density, bars/step |
 | density 1 | Smoothed 1-D distribution (KDE) | layer/stack, cumulative, normalize |
 | density 2 | Joint distribution of two numerics | 2-D histogram or KDE contours; optional rug on both axes |

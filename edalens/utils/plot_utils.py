@@ -449,9 +449,13 @@ def ohlc_frame(
 
 
 def candlestick_figure(
-    ohlc: pd.DataFrame, title: str, y_label: str, range_slider: bool = False
+    ohlc: pd.DataFrame, title: str, y_label: str, range_slider: bool = False, hide_weekends: bool = False
 ) -> go.Figure:
-    """Candlesticks from ``ohlc_frame`` output (index: steps)."""
+    """Candlesticks from ``ohlc_frame`` output (index: steps).
+
+    ``hide_weekends`` removes Saturday and Sunday from a date axis, so trading
+    days sit next to each other instead of around two-day gaps.
+    """
     fig = go.Figure(
         go.Candlestick(
             x=ohlc.index, open=ohlc["open"], high=ohlc["high"], low=ohlc["low"], close=ohlc["close"],
@@ -463,9 +467,20 @@ def candlestick_figure(
         title=title, xaxis_title=ohlc.index.name, yaxis_title=y_label, height=550,
         xaxis_rangeslider_visible=range_slider, showlegend=False,
     )
-    if not pd.api.types.is_datetime64_any_dtype(ohlc.index) and not pd.api.types.is_numeric_dtype(ohlc.index):
+    if pd.api.types.is_datetime64_any_dtype(ohlc.index):
+        if hide_weekends:
+            fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+    elif not pd.api.types.is_numeric_dtype(ohlc.index):
         fig.update_xaxes(type="category")
     return fig
+
+
+def has_weekend_dates(values: pd.Series, dayfirst: bool = True) -> Optional[bool]:
+    """Whether date-like ``values`` fall on a Saturday or Sunday; None when they are not dates."""
+    dates = date_values(values, dayfirst)
+    if dates is None:
+        return None
+    return bool((dates.dropna().dt.dayofweek >= 5).any())
 
 
 def waterfall_frame(
@@ -683,6 +698,71 @@ def date_labels(dates: pd.Series, by: str) -> pd.Series:
         has_time = (dates.dropna() != dates.dropna().dt.normalize()).any()
         fmt = "%Y-%m-%d %H:%M" if has_time else "%Y-%m-%d"
     return dates.dt.strftime(fmt)
+
+
+RAW_VALUES = "None (raw values)"
+LINE_AGGREGATIONS = ("Mean", "Median", "Sum", "Min", "Max", RAW_VALUES)
+# Spread around a mean line: a t-based confidence interval, or ±1 standard deviation.
+LINE_INTERVALS = {"None": None, "95% CI": 0.95, "68% CI": 0.68, "99% CI": 0.99, "SD": "sd"}
+
+
+def line_summary(
+    frame: pd.DataFrame,
+    x: str,
+    y: str,
+    groups: Sequence[Optional[str]] = (),
+    aggregation: str = "Mean",
+    interval: str = "None",
+) -> pd.DataFrame:
+    """One row per X step of each line: columns ``groups``, ``x``, value, lower, upper.
+
+    Lines are split by ``groups`` (color, style, facets). Each X step is aggregated,
+    or, with RAW_VALUES, every row is kept. Rows come in line order, then X order
+    (category order for categoricals). lower/upper hold the interval around a Mean
+    (NaN where it needs two or more values, or no interval is asked for).
+    """
+    groups = [g for g in dict.fromkeys(groups) if g and g not in (x, y)]
+    data = frame[list(dict.fromkeys([x, y, *groups]))].copy()
+    data[y] = pd.to_numeric(data[y], errors="coerce")
+    data = data.dropna(subset=[x, y])
+    keys = groups + [x]
+    if aggregation == RAW_VALUES:
+        out = data.rename(columns={y: "value"})
+        if out.empty:
+            return out.assign(lower=[], upper=[])
+        out = out.sort_values(keys, kind="stable") if keys else out
+        return out[keys + ["value"]].assign(lower=np.nan, upper=np.nan).reset_index(drop=True)
+
+    stats = data.groupby(keys, observed=True, sort=True)[y].agg(
+        value=_BAR_FUNCS[aggregation], mean="mean", std="std", count="count"
+    ).reset_index()
+    stats = stats[stats["count"] > 0]
+    level = LINE_INTERVALS.get(interval)
+    lower = upper = pd.Series(np.nan, index=stats.index)
+    if aggregation == "Mean" and level == "sd":
+        lower, upper = stats["mean"] - stats["std"], stats["mean"] + stats["std"]
+    elif aggregation == "Mean" and level:
+        from scipy.stats import t
+
+        se = stats["std"] / np.sqrt(stats["count"])
+        with np.errstate(invalid="ignore", divide="ignore"):
+            half = t.ppf((1 + level) / 2, stats["count"] - 1) * se
+        lower, upper = stats["mean"] - half, stats["mean"] + half
+    return stats[keys + ["value"]].assign(lower=lower, upper=upper).reset_index(drop=True)
+
+
+def line_widths(frame: pd.DataFrame, groups: Sequence[str], width: str,
+                thinnest: float = 1.0, widest: float = 6.0) -> dict:
+    """Line width per line (a tuple of ``groups`` values): the mean of ``width``
+    for that line, scaled to ``thinnest``..``widest`` pixels."""
+    values = pd.to_numeric(frame[width], errors="coerce")
+    means = values.groupby([frame[g] for g in groups], observed=True).mean() if groups else \
+        pd.Series([values.mean()], index=[()])
+    low, high = means.min(), means.max()
+    span = high - low
+    scaled = thinnest + (means - low) / span * (widest - thinnest) if span > 0 else \
+        means * 0 + (thinnest + widest) / 2
+    return {(k if isinstance(k, tuple) else (k,)): float(v) for k, v in scaled.items() if pd.notna(v)}
 
 
 HISTOGRAM_STATS = ("count", "probability", "percent", "density")

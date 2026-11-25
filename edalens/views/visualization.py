@@ -8,6 +8,7 @@ from scipy.stats import gaussian_kde
 from scipy.cluster import hierarchy
 import warnings
 import re
+import itertools
 from scipy.stats import t
 
 from edalens.utils.data_processing import parse_dates
@@ -15,7 +16,8 @@ from edalens.utils.ui import plotly_chart, start_charts
 from edalens.utils.plot_utils import (
     ADDITIVE_AGGREGATIONS, BAR_AGGREGATIONS, BAR_ERRORS, BAR_SCALES, DATE_GROUPS,
     CANDLE_SOURCES, FIT_METHODS, HEATMAP_ROW_ORDERS, HEATMAP_SCALINGS, MARGINAL_KINDS,
-    bar_figure, bar_summary, candlestick_figure, date_labels, date_values, group_dates,
+    bar_figure, bar_summary, candlestick_figure, date_labels, date_values, group_dates, has_weekend_dates,
+    LINE_AGGREGATIONS, LINE_INTERVALS, RAW_VALUES, _rgba, line_summary, line_widths,
     fill_steps, histogram_bars, step_histogram_frame, numeric_heatmap_figure, ohlc_frame, regression_figure,
     waterfall_figure, waterfall_frame,
 )
@@ -146,7 +148,7 @@ def visualization():
         else:
             if plot in ['bars', 'boxes', 'catplot', 'lineplot', 'heatmap', 'waterfall', 'candlestick']:
                 x_opts = categorical_cols.copy() if categorical_cols else data.columns.tolist()
-                if plot == 'bars':  # Datetime columns too: bars can group dates by month, year...
+                if plot in ('bars', 'lineplot'):  # Datetime columns too: dates can be grouped by month, year...
                     x_opts += [c for c in data.columns if pd.api.types.is_datetime64_any_dtype(data[c]) and c not in x_opts]
             else:  # scatter, histogram, density 1/2, regression, ridges
                 x_opts = numeric_cols.copy() if numeric_cols else data.columns.tolist()
@@ -313,7 +315,7 @@ def visualization():
         "heatmap": '🔥 heatmap', 
         'ridges': '🏔️ ridges',
         'candlestick': '🕯️ candlestick',
-        'waterfall': '🪜 waterfall'
+        'waterfall': '🌊 waterfall'
     }
 
 
@@ -951,35 +953,68 @@ def visualization():
             elif plot_type == 'lineplot':
                 var_x = global_var_x
                 var_y = global_var_y
-                hue_used = global_hue
+                hue_used = global_hue if global_hue != var_x else None
                 facet_col_used = global_facet_col
                 facet_row_used = global_facet_row
 
                 with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
                     style_cols = ['None'] + (data.columns.tolist() if risk_it_all else categorical_cols)
                     width_cols = ['None'] + (data.columns.tolist() if risk_it_all else numeric_cols)
-                    
-                    style = st.selectbox("Line Style (Categorical)", style_cols, index=0)
-                    width = st.selectbox("Line Width (Numeric)", width_cols, index=0)
+
+                    aggregation = st.selectbox(
+                        "Aggregation", LINE_AGGREGATIONS, index=0,
+                        help="How the Y values at each X step become one point. "
+                             f"'{RAW_VALUES}' plots every row, joined in X order (e.g., a series with one value per date).")
+                    interval, interval_style = "None", "Band"
+                    if aggregation == "Mean":
+                        interval = st.selectbox("Spread around the mean", list(LINE_INTERVALS), index=0,
+                                                help="A confidence interval of the mean, or ±1 standard deviation.")
+                        if interval != "None":
+                            interval_style = st.radio("Show spread as", ["Band", "Error bars"], horizontal=True)
                     show_markers = st.checkbox("Show Markers", value=True)
-                    band_interval = st.checkbox("Show Band in Lineplot (CI)", value=False)
-                    time_series = st.checkbox("Time is here", value=False)
-                    aggregation_method = st.selectbox("Aggregation Method", ["Mean", "Sum"], index=0) if not time_series else "Raw"
-                    ci_level = st.selectbox("Confidence Interval Level", ["68%", "95%", "99%"], index=1) if (band_interval and not time_series) else "95%"
-                    
+                    style = st.selectbox("Line Style (Categorical)", style_cols, index=0,
+                                         help="Splits lines by this variable, drawn solid, dashed, dotted...")
+                    width = st.selectbox("Line Width (Numeric)", width_cols, index=0,
+                                         help="Each line's width follows its mean of this variable.")
                     style_used = None if style == 'None' else style
                     width_used = None if width == 'None' else width
-                    ci_level_value = {"68%": 0.68, "95%": 0.95, "99%": 0.99}.get(ci_level, 0.95)
-                    
+
                     plot_data = data.copy()
-                    if hue_used is not None and hue_used in plot_data.columns: plot_data[hue_used] = plot_data[hue_used].astype(str)
+                    for name in (hue_used, style_used):
+                        if name and name in plot_data.columns and not is_text_like(plot_data[name]):
+                            plot_data[name] = plot_data[name].astype(str)
+
+                    # A date X (datetime column, or text that is all dates) is plotted on a time
+                    # axis in date order, optionally grouped by week, month, quarter or year.
+                    x_dates = date_values(plot_data[var_x])
+                    if x_dates is not None and not pd.api.types.is_datetime64_any_dtype(plot_data[var_x]):
+                        if not st.checkbox("Day First when X holds dates (e.g., 31/12/2023)", value=True):
+                            x_dates = date_values(plot_data[var_x], dayfirst=False)
+                    date_group = None
+                    if x_dates is not None:
+                        date_group = st.selectbox(f"Group dates in {var_x} by", list(DATE_GROUPS), index=0,
+                                                  help="Month on daily readings gives monthly totals (Sum) or averages (Mean).")
+                        plot_data[var_x] = group_dates(x_dates, date_group)
 
                     category_orders = {}
-                    for var_name, prefix in [(var_x, "x"), (hue_used, "hue"), (facet_col_used, "col"), (facet_row_used, "row")]:
-                        if var_name and var_name in plot_data.columns and is_text_like(plot_data[var_name]):
+                    for var_name, prefix in [(var_x, "x"), (hue_used, "hue"), (style_used, "style"),
+                                             (facet_col_used, "col"), (facet_row_used, "row")]:
+                        if var_name == var_x and x_dates is not None:
+                            continue
+                        if var_name and var_name in plot_data.columns and var_name not in category_orders \
+                                and is_text_like(plot_data[var_name]):
                             c_order = order_select(f"Custom Order for {prefix}: {var_name}", var_name, plot_data[var_name])
                             plot_data[var_name] = ordered_categories(plot_data[var_name], c_order)
                             category_orders[var_name] = c_order
+
+                if var_y in (None, 'None', var_x) or pd.to_numeric(plot_data[var_y], errors="coerce").isna().all():
+                    st.warning(f"The lineplot needs a numeric Y other than X; '{var_y}' has no numbers to plot.")
+                    return
+
+                line_keys = [g for g in dict.fromkeys([hue_used, style_used]) if g]
+                panel_keys = [g for g in dict.fromkeys([facet_row_used, facet_col_used]) if g]
+                summary = line_summary(plot_data, var_x, var_y, line_keys + panel_keys, aggregation, interval)
+                widths = line_widths(plot_data, line_keys, width_used) if width_used else {}
 
                 facet_col_vals = levels(plot_data[facet_col_used]) if facet_col_used else [None]
                 facet_row_vals = levels(plot_data[facet_row_used]) if facet_row_used else [None]
@@ -998,96 +1033,61 @@ def visualization():
                     ]
                 )
 
-                hue_values = levels(plot_data[hue_used]) if (hue_used and hue_used != var_x) else [None]
-                color_map = {hv: PALETTE[idx % len(PALETTE)] for idx, hv in enumerate(hue_values)}
+                # One line per combination of color and style values (one key when both are the same column).
+                line_levels = [levels(plot_data[g]) for g in line_keys]
+                color_map = {hv: PALETTE[idx % len(PALETTE)] for idx, hv in enumerate(levels(plot_data[hue_used]) if hue_used else [None])}
+                dashes = ['solid', 'dash', 'dot', 'dashdot', 'longdash', 'longdashdot']
+                dash_map = {sv: dashes[idx % len(dashes)] for idx, sv in enumerate(levels(plot_data[style_used]) if style_used else [None])}
 
-                line_styles = {'solid': 'solid', 'dash': 'dash', 'dot': 'dot', 'dashdot': 'dashdot'}
-                if style_used and style_used in plot_data.columns and is_text_like(plot_data[style_used]):
-                    style_values = plot_data[style_used].dropna().unique()
-                    style_map = {v: list(line_styles.values())[i % len(line_styles)] for i, v in enumerate(style_values)}
-                else:
-                    style_map = {None: 'solid'}
-
-                if width_used and width_used in plot_data.columns and np.issubdtype(plot_data[width_used].dtype, np.number):
-                    width_map = plot_data[width_used].dropna().to_dict()
-                else: width_map = {None: 2}
-
-                seen_hue_values = set()
-
+                seen = set()
                 for i_row, row_val in enumerate(facet_row_vals):
                     for i_col, col_val in enumerate(facet_col_vals):
-                        row_idx, col_idx = i_row + 1, i_col + 1
-                        sub_data = plot_data.copy()
-                        if facet_row_used: sub_data = sub_data[sub_data[facet_row_used] == row_val]
-                        if facet_col_used: sub_data = sub_data[sub_data[facet_col_used] == col_val]
-                        if sub_data.empty: continue
+                        panel = summary
+                        if facet_row_used: panel = panel[panel[facet_row_used] == row_val]
+                        if facet_col_used: panel = panel[panel[facet_col_used] == col_val]
+                        for combo in itertools.product(*line_levels):
+                            values = dict(zip(line_keys, combo))
+                            sub = panel
+                            for g, v in values.items(): sub = sub[sub[g] == v]
+                            if sub.empty: continue
+                            color = color_map[values.get(hue_used)]
+                            name = ", ".join(map(str, combo)) or var_y
+                            line = dict(color=color, dash=dash_map[values.get(style_used)], width=widths.get(combo, 2))
+                            has_spread = interval != "None" and sub["lower"].notna().any()
+                            if has_spread and interval_style == "Band":
+                                band = sub.dropna(subset=["lower", "upper"])
+                                fig.add_trace(go.Scatter(
+                                    x=pd.concat([band[var_x], band[var_x][::-1]]), y=pd.concat([band["upper"], band["lower"][::-1]]),
+                                    fill="toself", fillcolor=_rgba(color, 0.2), line=dict(width=0), hoverinfo="skip",
+                                    legendgroup=name, showlegend=False, name=f"{name} ({interval})",
+                                ), row=i_row + 1, col=i_col + 1)
+                            scatter_kwargs = dict(
+                                x=sub[var_x], y=sub["value"], mode='lines' + ('+markers' if show_markers else ''),
+                                name=name, legendgroup=name, showlegend=name not in seen,
+                                marker=dict(size=6, color=color), line=line,
+                            )
+                            if has_spread and interval_style == "Error bars":
+                                scatter_kwargs['error_y'] = dict(type='data', symmetric=False, array=sub["upper"] - sub["value"],
+                                                                 arrayminus=sub["value"] - sub["lower"], thickness=1.5, width=5, color=color)
+                            seen.add(name)
+                            fig.add_trace(go.Scatter(**scatter_kwargs), row=i_row + 1, col=i_col + 1)
 
-                        for hue_val in hue_values:
-                            subset = sub_data.copy()
-                            if hue_used and hue_used != var_x: subset = subset[subset[hue_used] == hue_val]
-                            if subset.empty: continue
-                            
-                            line_color = color_map[hue_val]
-                            show_in_legend = hue_val not in seen_hue_values
-                            if show_in_legend: seen_hue_values.add(hue_val)
-
-                            if time_series:
-                                is_object = False
-                                if isinstance(plot_data[var_x].dtype, pd.CategoricalDtype):
-                                    if is_text_like(plot_data[var_x].cat.categories): is_object = True
-                                else:
-                                    if is_text_like(plot_data[var_x]): is_object = True
-
-                                if not is_object:
-                                    st.warning(f"Time series requires '{var_x}' to be an object (dates).")
-                                    continue
-                                if not np.issubdtype(plot_data[var_y].dtype, np.number):
-                                    st.warning(f"Time series requires '{var_y}' to be numeric.")
-                                    continue
-
-                                scatter_kwargs = dict(
-                                    x=subset[var_x], y=subset[var_y], mode='lines' + ('+markers' if show_markers else ''),
-                                    name=str(hue_val) if hue_val else "Line", legendgroup=str(hue_val) if hue_val else None,
-                                    marker=dict(size=6, color=line_color),
-                                    line=dict(color=line_color, dash=style_map.get(subset[style_used].iloc[0] if style_used else None, 'solid'), width=width_map.get(subset[width_used].iloc[0] if width_used else None, 2)),
-                                    showlegend=show_in_legend
-                                )
-                            else:
-                                group_cols = list(dict.fromkeys([col for col in [var_x, hue_used, facet_col_used, facet_row_used] if col is not None and col != var_x]))
-                                group_cols = [var_x] + group_cols
-                                grouped = plot_data.groupby(group_cols, observed=True)[var_y].agg(['mean', 'std', 'count', 'sum']).reset_index()
-
-                                # Categorical groupings list unobserved combinations with a count of 0.
-                                sub = grouped[grouped['count'] > 0].copy()
-                                if hue_used and hue_used != var_x: sub = sub[sub[hue_used] == hue_val]
-                                if facet_row_used: sub = sub[sub[facet_row_used] == row_val]
-                                if facet_col_used: sub = sub[sub[facet_col_used] == col_val]
-
-                                if sub.empty: continue
-
-                                sub['se'] = sub['std'] / np.sqrt(sub['count'])
-                                sub['ci_lower'], sub['ci_upper'] = t.interval(ci_level_value, sub['count'] - 1, loc=sub['mean'], scale=sub['se'])
-                                sub['ci'] = (sub['ci_upper'] - sub['ci_lower']) / 2
-                                y_values = sub['sum'] if aggregation_method == "Sum" else sub['mean']
-
-                                scatter_kwargs = dict(
-                                    x=sub[var_x], y=y_values, mode='lines' + ('+markers' if show_markers else ''),
-                                    name=str(hue_val) if hue_val else "Line", legendgroup=str(hue_val) if hue_val else None,
-                                    marker=dict(size=6, color=line_color),
-                                    line=dict(color=line_color, dash=style_map.get(sub[style_used].iloc[0] if style_used else None, 'solid'), width=width_map.get(sub[width_used].iloc[0] if width_used else None, 2)),
-                                    showlegend=show_in_legend
-                                )
-                                if band_interval and aggregation_method == "Mean":
-                                    scatter_kwargs['error_y'] = dict(type='data', symmetric=True, array=sub['ci'], thickness=1.5, width=5, color=line_color)
-
-                            fig.add_trace(go.Scatter(**scatter_kwargs), row=row_idx, col=col_idx)
-
-                fig.update_layout(width=1000, height=panel_height * n_rows + 80, margin=dict(b=80), title=f"{'Time Series ' if time_series else ''}Lineplot: {aggregation_method} of {var_y} vs {var_x}", showlegend=True, legend_title=hue_used)
-                if facet_row_used or facet_col_used:
-                    for i in range(1, n_rows + 1):
-                        for j in range(1, n_cols + 1):
-                            fig.update_xaxes(title_text=var_x, row=i, col=j, showticklabels=True)
-                            fig.update_yaxes(title_text=f"{aggregation_method} of {var_y}", row=i, col=j, showticklabels=True)
+                raw = aggregation == RAW_VALUES
+                y_title = var_y if raw else f"{aggregation} of {var_y}"
+                x_title = f"{var_x} ({date_group.lower()})" if date_group and date_group != "As is" else var_x
+                legend_title = ", ".join(dict.fromkeys(g for g in (hue_used, style_used) if g)) or None
+                fig.update_layout(width=1000, height=panel_height * n_rows + 80, margin=dict(b=80),
+                                  title=f"Lineplot: {y_title} by {x_title}", showlegend=bool(legend_title),
+                                  legend_title=legend_title)
+                fig.update_xaxes(title_text=x_title, showticklabels=True)
+                fig.update_yaxes(title_text=y_title, showticklabels=True)
+                if x_dates is not None:
+                    fig.update_xaxes(type="date")
+                    if date_group and DATE_GROUPS[date_group][1]:
+                        fig.update_xaxes(tickformat=DATE_GROUPS[date_group][1])
+                elif var_x in category_orders:
+                    # All panels show the X steps in the chosen order, even where a line lacks some.
+                    fig.update_xaxes(type="category", categoryorder="array", categoryarray=category_orders[var_x])
                 plotly_chart(fig)
 
             elif plot_type == 'ridges':
@@ -1653,6 +1653,12 @@ def visualization():
                                 guess = next((c for c in numeric_cols if c.lower() == name.lower()), var_y)
                                 ohlc_cols.append(st.selectbox(name, numeric_cols, index=numeric_cols.index(guess) if guess in numeric_cols else 0))
                         range_slider = st.checkbox("Range Slider", value=False)
+                        weekends = has_weekend_dates(plot_data[var_x], dayfirst)
+                        hide_weekends = st.checkbox(
+                            "Hide weekend gaps", value=not weekends,
+                            help="Removes Saturdays and Sundays from the date axis, so trading days sit side by side. "
+                                 "On by default when no row falls on a weekend; it would hide weekend candles otherwise.",
+                        ) if weekends is not None else False
                     else:
                         aggregation_method = st.selectbox("Change per X step", ["Sum", "Mean"], index=0)
                         show_total = st.checkbox("Show Total Bar", value=True)
@@ -1661,7 +1667,7 @@ def visualization():
                     if plot_type == 'candlestick':
                         ohlc = ohlc_frame(plot_data, var_x, value=None if ohlc_cols else var_y, ohlc=ohlc_cols, dayfirst=dayfirst)
                         y_label = var_y if not ohlc_cols else ", ".join(dict.fromkeys(ohlc_cols))
-                        fig = candlestick_figure(ohlc, f"Candlestick of {y_label} by {var_x}", y_label, range_slider)
+                        fig = candlestick_figure(ohlc, f"Candlestick of {y_label} by {var_x}", y_label, range_slider, hide_weekends)
                     else:
                         changes = waterfall_frame(plot_data, var_x, var_y, aggregation_method, dayfirst)
                         fig = waterfall_figure(changes, f"Waterfall: {aggregation_method} of {var_y} by {var_x}", var_y, show_total)

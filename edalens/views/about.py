@@ -217,8 +217,9 @@ def about():
   - **Multivariate**: Pairplots, Ridgeplots, Heatmaps.
   - **Missing Data**: Visualize missingness, correlations, dendrograms.
 
-- **Time Series Support (very limited)**:
-  - Enable the "Time is here" option in line plots and bar plots to plot raw time series data (e.g., dates on the x-axis and numerical values on the y-axis) without aggregation or sorting.
+- **Dates on the X axis**:
+  - Line and bar plots put a date X (a datetime column, or text that is all dates) on a time axis in date order, optionally grouped by week, month, quarter or year.
+  - Line plots aggregate each X step (mean, median, sum, min, max) or, with "None (raw values)", plot every row joined in X order. The Time Series page has more tools.
 
 - **Advanced Controls**
   - Custom order for categorical variables (X, Hue, Facets).

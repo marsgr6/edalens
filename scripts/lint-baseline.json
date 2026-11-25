@@ -1,8 +1,1 @@
-[
-  {
-    "path": "edalens/views/time_series.py",
-    "code": "F821",
-    "message": "Undefined name `run_prophet_changeppoints`",
-    "source": ") = run_prophet_changeppoints("
-  }
-]
+[]

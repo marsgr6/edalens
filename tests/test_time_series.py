@@ -104,3 +104,42 @@ def test_loader_reads_iso_dates_with_day_first_selected(monkeypatch):
     ).value.startswith("DD/MM")
     assert not app.exception and not app.warning, [w.value for w in app.warning]
     assert app.session_state["df"].index.equals(pd.DatetimeIndex(dates, name="date"))
+
+
+def test_changepoints_run_for_several_variables(monkeypatch):
+    # One Prophet model per variable; this branch once called a misspelled helper.
+    pytest.importorskip("prophet")
+    import requests
+
+    dates = pd.date_range("2020-01-01", periods=120, freq="D")
+    trend = [i if i < 60 else 60 + 3 * (i - 60) for i in range(120)]
+    csv = (
+        pd.DataFrame({"date": dates.strftime("%Y-%m-%d"), "a": trend, "b": trend[::-1]})
+        .to_csv(index=False)
+        .encode()
+    )
+
+    class Response:
+        content = csv
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(sys, "platform", "emscripten")
+    app = AppTest.from_function(time_series_page, default_timeout=120)
+    app.run()
+    next(r for r in app.radio if r.label == "Select data source").set_value(
+        "GitHub Link"
+    )
+    app.run()
+    app.text_input[0].set_value("https://example.com/v.csv")
+    app.run()
+    app.sidebar.radio[0].set_value("Changepoint Analysis")
+    app.run()
+    next(c for c in app.sidebar.checkbox if "multiple" in c.label).check()
+    app.run()
+    app.sidebar.multiselect[0].set_value(["a", "b"])
+    app.run()
+    assert not app.exception, app.exception
+    assert len(app.get("plotly_chart")) >= 2  # A changepoint chart per variable.
