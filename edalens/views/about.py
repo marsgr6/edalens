@@ -203,7 +203,14 @@ def about():
   - Subsample data randomly.
   - Extract date features (Year, Month, Day, Hour).
   - Reshape datasets with melting.
+  - Clean data: rename columns, order category labels, parse dates, filter rows, bin numbers, recode labels.
+  - Impute missing values: KNN (choose k), mean, median, zero or interpolation; most frequent value or a "Missing" label.
   - Download the processed dataset.
+
+- **Statistics**
+  - Summary table per column (missing, unique, mean, median, SD, skew, outliers) and duplicate rows.
+  - Group comparisons: t-test/ANOVA or Mann-Whitney/Kruskal-Wallis with effect sizes; chi-square with Cramér's V.
+  - Pearson, Spearman and Kendall correlations with p-values; outlier view with an option to exclude rows.
 
 - **Data Requirements**:
   - Supports both categorical and numerical data.
@@ -222,10 +229,12 @@ def about():
   - Line plots aggregate each X step (mean, median, sum, min, max) or, with "None (raw values)", plot every row joined in X order. The Time Series page has more tools.
 
 - **Advanced Controls**
-  - Custom order for categorical variables (X, Hue, Facets).
+  - Custom order for categorical variables (X, Hue, Facets), starting from the order set on the Load data page.
+  - "Python code" under the main charts recreates them with pandas and plotly express.
+  - Save a whole session (data, steps, plot settings, report) to a file and open it later.
   - Faceting by row and column.
   - Optional swarm overlay for boxplots and violins.
-  - Display statistical bands (±1 std) in line plots.
+  - Confidence or ±1 SD bands in line plots.
   - Cumulative and normalized density options.
 
 - **Dynamic Behavior**

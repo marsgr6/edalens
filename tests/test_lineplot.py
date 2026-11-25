@@ -156,3 +156,25 @@ def test_line_summary_interval_needs_two_values():
     assert out["lower"].iloc[0] == pytest.approx(2 - np.sqrt(2)) and np.isnan(
         out["lower"].iloc[1]
     )
+
+
+def test_numeric_x_is_offered_and_plotted_in_numeric_order():
+    rng = np.random.default_rng(4)
+    frame = pd.DataFrame(
+        {
+            "dose": rng.choice([10, 2, 5, 20], 120),
+            "group": rng.choice(["a", "b"], 120),
+            "response": rng.normal(0, 1, 120),
+        }
+    )
+    app = viz_app(frame, "lineplot", x="group", y="response")
+    app.run()
+    assert "dose" in select(app, "X").options
+    select(app, "X").set_value("dose")
+    app.run()
+    assert not app.exception
+    (trace,) = lines(app)
+    assert array(trace["x"]) == [2, 5, 10, 20]
+    assert chart(app)["layout"]["xaxis"].get("type") in (None, "linear", "-")
+    expected = frame.groupby("dose")["response"].mean()
+    assert array(trace["y"]) == pytest.approx(expected.tolist())

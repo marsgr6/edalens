@@ -1,5 +1,6 @@
 """Reports: charts saved from the app, exported as HTML/PDF and handed back to Python."""
 
+import os
 import io
 import sys
 from pathlib import Path
@@ -172,9 +173,10 @@ def test_add_to_report_then_export_html_and_publish(monkeypatch):
     assert any("data:text/html;base64," in m.value for m in app.markdown)
 
 
-def test_published_link_shows_the_report(monkeypatch):
+def test_published_link_shows_the_report(monkeypatch, tmp_path):
     from edalens.views import report as report_view
 
+    monkeypatch.setenv(report_view.PUBLISH_DIR_ENV, str(tmp_path))
     report_view._published.clear()
     app = app_with_data(monkeypatch)
     monkeypatch.setattr(report_view, "in_browser", lambda: False)
@@ -184,12 +186,51 @@ def test_published_link_shows_the_report(monkeypatch):
     button(app, "🔗 Publish link").click()
     app.run()
     assert not app.exception
-    (report_id,) = report_view._published()
+    (page,) = tmp_path.glob("*.html")
+    report_id = page.stem
+    report_view._published.clear()  # As after a restart: the link reads the saved file.
     viewer = AppTest.from_file(APP, default_timeout=30)
     viewer.query_params["report"] = report_id
     viewer.run()
     assert not viewer.exception
     assert viewer.get("download_button")
+
+
+def test_published_reports_survive_restarts_and_reject_other_names(
+    monkeypatch, tmp_path
+):
+    from edalens.views import report as report_view
+
+    monkeypatch.setenv(report_view.PUBLISH_DIR_ENV, str(tmp_path / "pub"))
+    report_view._published.clear()
+    report_id, on_disk = report_view.publish("T", "<p>hi</p>", 500)
+    report_view._published.clear()
+    assert on_disk and report_view.published(report_id) == ("T", "<p>hi</p>", 500)
+    (tmp_path / "secret.html").write_text("no")
+    for name in ("../secret", "..", "", "a/b", "x" * 40):
+        assert report_view.published(name) is None
+
+
+def test_publishing_falls_back_to_memory_and_keeps_the_newest(monkeypatch, tmp_path):
+    from edalens.views import report as report_view
+
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    monkeypatch.setenv(report_view.PUBLISH_DIR_ENV, str(blocker / "pub"))
+    report_view._published.clear()
+    report_id, on_disk = report_view.publish("T", "<p>x</p>", 500)
+    assert not on_disk and report_view.published(report_id)[0] == "T"
+
+    monkeypatch.setenv(report_view.PUBLISH_DIR_ENV, str(tmp_path / "pub"))
+    monkeypatch.setattr(report_view, "MAX_PUBLISHED", 2)
+    ids = []
+    for n in range(3):
+        ids.append(report_view.publish(str(n), "<p></p>", 500)[0])
+        stamp = 1_000_000 + n  # Distinct modification times, oldest first.
+        os.utime(tmp_path / "pub" / f"{ids[-1]}.html", (stamp, stamp))
+    report_view.publish("3", "<p></p>", 500)
+    assert len(list((tmp_path / "pub").glob("*.html"))) == 2
+    assert report_view.published(ids[0]) is None
 
 
 def test_send_to_python_saves_a_report_for_the_launcher(monkeypatch, tmp_path):
@@ -215,3 +256,33 @@ def test_report_before_anything_was_sent_explains_how():
 
     with pytest.raises(LookupError, match="Send to Python"):
         EDALensServer(8599).report()
+
+
+def test_text_and_table_blocks_with_contents():
+    report = sample_report()
+    report.add_text("Findings <1>", "Thursday tips are higher.")
+    report.add_table(
+        pd.DataFrame({"Column": ["tip"], "Mean": [3.14159]}), "Summary", "All rows."
+    )
+    report.move(2, -2)  # The heading first.
+    page = report.to_html(embed_plotly=False)
+    assert "<summary>Contents</summary>" in page and 'href="#item-0"' in page
+    assert "Findings &lt;1&gt;" in page and 'class="card text"' in page
+    assert 'class="dataframe data"' in page and "3.142" in page
+    assert "2 charts · 2 text/table blocks" in page
+    assert report.html_height() > 160
+    again = Report.from_json(report.to_json())
+    assert again.items[-1].frame().equals(report.items[-1].frame())
+
+
+def test_text_and_table_blocks_become_pdf_pages():
+    report = Report("T")
+    report.add_text("Heading", "Paragraph")
+    report.add_table(pd.DataFrame({"a": range(40)}), "Long table")
+    text_page, table_page = (report._page(item) for item in report.items)
+    assert any("Heading" in a.text for a in text_page.layout.annotations)
+    assert (
+        table_page.data[0].type == "table"
+        and len(table_page.data[0].cells.values[0]) == 30
+    )
+    assert "First 30 of 40 rows" in table_page.layout.title.text

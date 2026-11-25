@@ -29,6 +29,9 @@ from edalens.utils.export import DEFAULT_CONTEXT, PDF_HELP, ExportError, figures
 
 PLOTLY = "plotly"
 IMAGE = "image"
+TEXT = "text"  # A heading (title) and a paragraph (note) between charts.
+TABLE = "table"  # A DataFrame, e.g. the summary statistics.
+TABLE_PDF_ROWS = 30
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 COLUMN_CHOICES = (1, 2)
 NOTE_WRAP_CHARS = 110
@@ -47,10 +50,16 @@ class ReportItem:
     figure: Optional[str] = None  # Plotly figure JSON.
     svg: Optional[str] = None
     png: Optional[str] = None  # Base64.
+    table: Optional[str] = None  # DataFrame JSON (orient="split").
     uid: str = field(default_factory=lambda: uuid.uuid4().hex[:12])  # Stable across reorders.
 
     def plotly_figure(self) -> go.Figure:
         return pio.from_json(self.figure)
+
+    def frame(self):
+        import pandas as pd
+
+        return pd.read_json(io.StringIO(self.table), orient="split")
 
 
 def figure_title(fig, default: str = "Chart") -> str:
@@ -86,6 +95,22 @@ class Report:
             item = ReportItem(PLOTLY, title, note, figure=go.Figure(fig).to_json())
         self.items.append(item)
         return item
+
+    def add_text(self, title: str, text: str = "") -> ReportItem:
+        """Append a heading with an optional paragraph (shown across the whole page)."""
+        item = ReportItem(TEXT, title, text)
+        self.items.append(item)
+        return item
+
+    def add_table(self, frame, title: str = "Table", note: str = "") -> ReportItem:
+        """Append a pandas DataFrame as a table."""
+        item = ReportItem(TABLE, title, note, table=frame.to_json(orient="split", date_format="iso"))
+        self.items.append(item)
+        return item
+
+    @property
+    def charts(self) -> int:
+        return sum(item.kind in (PLOTLY, IMAGE) for item in self.items)
 
     def move(self, index: int, step: int) -> None:
         """Move item ``index`` up (step -1) or down (step 1), if there is room."""
@@ -133,6 +158,16 @@ class Report:
         else:
             script = f'<script src="{PLOTLY_CDN}"></script>'
         cards = "\n".join(self._card(i, item) for i, item in enumerate(self.items))
+        toc = ""
+        if len(self.items) > 1:
+            links = "".join(
+                f'<li class="{item.kind}"><a href="#item-{i}">{html.escape(item.title)}</a></li>'
+                for i, item in enumerate(self.items)
+            )
+            toc = f'<nav><details open><summary>Contents</summary><ol>{links}</ol></details></nav>'
+        count = f'{self.charts} chart{"s" if self.charts != 1 else ""}'
+        if len(self.items) > self.charts:
+            count += f" · {len(self.items) - self.charts} text/table block{'s' if len(self.items) - self.charts != 1 else ''}"
         columns = self.columns if self.columns in COLUMN_CHOICES else 1
         created = html.escape(self.created.replace("T", " "))
         return f"""<!doctype html>
@@ -161,14 +196,26 @@ class Report:
   .note {{ color: var(--muted); margin: 0 0 8px; white-space: pre-wrap; }}
   .figure img, .figure svg {{ max-width: 100%; height: auto; }}
   .plot {{ width: 100%; }}
+  .card.text {{ grid-column: 1 / -1; background: transparent; border: none; padding: 8px 2px 0; }}
+  .card.text h2 {{ font-size: 1.35rem; }}
+  .card.table {{ grid-column: 1 / -1; }}
+  .tablewrap {{ overflow-x: auto; }}
+  table.data {{ border-collapse: collapse; font-size: .85rem; width: 100%; }}
+  table.data th, table.data td {{ border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: right; }}
+  table.data th:first-child, table.data td:first-child {{ text-align: left; }}
+  nav {{ max-width: 1400px; margin: 0 auto; padding: 0 24px; }}
+  nav ol {{ margin: 6px 0 0; columns: 2; }}
+  nav li.text {{ font-weight: 600; }}
+  nav a {{ color: inherit; }}
   footer {{ text-align: center; color: var(--muted); font-size: .8rem; padding: 0 0 24px; }}
 </style>
 </head>
 <body>
 <header>
   <h1>{html.escape(self.title)}</h1>
-  <div class="meta">{len(self.items)} chart{"s" if len(self.items) != 1 else ""} · {created}</div>
+  <div class="meta">{count} · {created}</div>
 </header>
+{toc}
 <main>
 {cards}
 </main>
@@ -179,6 +226,14 @@ class Report:
 
     def _card(self, index: int, item: ReportItem) -> str:
         note = f'<p class="note">{html.escape(item.note)}</p>' if item.note.strip() else ""
+        anchor = f'id="item-{index}"'
+        if item.kind == TEXT:
+            return f'<section class="card text" {anchor}><h2>{html.escape(item.title)}</h2>{note}</section>'
+        if item.kind == TABLE:
+            body = item.frame().to_html(classes="data", border=0, index=False, na_rep="",
+                                        float_format=lambda v: f"{v:.4g}")
+            return (f'<section class="card table" {anchor}><h2>{html.escape(item.title)}</h2>{note}'
+                    f'<div class="tablewrap">{body}</div></section>')
         if item.kind == PLOTLY:
             fig = item.plotly_figure()
             # The card sets the width and shows the title; keep the chart's own height.
@@ -194,7 +249,7 @@ class Report:
         else:
             body = item.svg or f'<img alt="" src="data:image/png;base64,{item.png}">'
         return (
-            f'<section class="card"><h2>{html.escape(item.title)}</h2>{note}'
+            f'<section class="card" {anchor}><h2>{html.escape(item.title)}</h2>{note}'
             f'<div class="figure">{body}</div></section>'
         )
 
@@ -205,15 +260,23 @@ class Report:
 
     def html_height(self) -> int:
         """Rough page height in px, for showing the page in a fixed-height frame."""
-        heights = []
-        for item in self.items:
-            height = 450
-            if item.kind == PLOTLY:
-                height = item.plotly_figure().layout.height or 450
-            heights.append(height + 90 + (40 if item.note else 0))
         columns = self.columns if self.columns in COLUMN_CHOICES else 1
-        rows = [max(heights[i : i + columns]) for i in range(0, len(heights), columns)]
-        return int(160 + sum(rows) + 16 * len(rows))
+        rows, line = [], []
+        for item in self.items:
+            if item.kind in (TEXT, TABLE):  # Full-width blocks end the current row.
+                rows += [max(line)] if line else []
+                line = []
+                height = 70 + 24 * item.note.count("\n") if item.kind == TEXT else 90 + 30 * (len(item.frame()) + 1)
+                rows.append(height + (40 if item.note and item.kind == TABLE else 0))
+                continue
+            height = (item.plotly_figure().layout.height or 450) if item.kind == PLOTLY else 450
+            line.append(height + 90 + (40 if item.note else 0))
+            if len(line) == columns:
+                rows.append(max(line))
+                line = []
+        rows += [max(line)] if line else []
+        toc = 60 + 12 * len(self.items) if len(self.items) > 1 else 0
+        return int(160 + toc + sum(rows) + 16 * len(rows))
 
     # -- PDF ----------------------------------------------------------------------
     def _title_page(self) -> go.Figure:
@@ -226,7 +289,7 @@ class Report:
             yanchor="bottom", showarrow=False, font=dict(size=30),
         )
         fig.add_annotation(
-            text=f"{len(self.items)} charts · {html.escape(self.created.replace('T', ' '))}",
+            text=f"{self.charts} charts · {html.escape(self.created.replace('T', ' '))}",
             x=0.5, y=0.78, xref="paper", yref="paper", yanchor="top", showarrow=False,
             font=dict(size=14, color="#616e7c"),
         )
@@ -243,6 +306,28 @@ class Report:
     def _page(self, item: ReportItem) -> go.Figure:
         """The item as a Plotly figure titled with its title and note."""
         note = "<br>".join(textwrap.wrap(html.escape(item.note), NOTE_WRAP_CHARS))
+        if item.kind == TEXT:
+            fig = go.Figure()
+            fig.add_annotation(text=f"<b>{html.escape(item.title)}</b>", x=0.5, y=0.6, xref="paper", yref="paper",
+                               showarrow=False, font=dict(size=28))
+            fig.add_annotation(text=note, x=0.5, y=0.52, xref="paper", yref="paper", yanchor="top",
+                               showarrow=False, font=dict(size=14), align="left")
+            fig.update_layout(xaxis_visible=False, yaxis_visible=False, plot_bgcolor="white",
+                              paper_bgcolor="white")
+            return fig
+        if item.kind == TABLE:
+            frame = item.frame()
+            shown = frame.head(TABLE_PDF_ROWS)
+            cells = [[f"{v:.4g}" if isinstance(v, float) else ("" if v is None else str(v)) for v in shown[c]]
+                     for c in shown.columns]
+            fig = go.Figure(go.Table(header=dict(values=[f"<b>{html.escape(str(c))}</b>" for c in shown.columns],
+                                                 fill_color="#e4e7eb", align="left"),
+                                     cells=dict(values=cells, align="left")))
+            if len(frame) > TABLE_PDF_ROWS:
+                note = (note + "<br>" if note else "") + f"First {TABLE_PDF_ROWS} of {len(frame)} rows."
+            title = f"{html.escape(item.title)}" + (f"<br><sup>{note}</sup>" if note else "")
+            fig.update_layout(title=dict(text=title), margin=dict(t=100 + 18 * note.count("<br>"), l=30, r=30, b=30))
+            return fig
         if item.kind == PLOTLY:
             fig = item.plotly_figure()
         else:
@@ -290,4 +375,4 @@ class Report:
 
     def _repr_html_(self) -> str:
         titles = "".join(f"<li>{html.escape(item.title)}</li>" for item in self.items)
-        return f"<b>{html.escape(self.title)}</b> ({len(self.items)} charts)<ol>{titles}</ol>"
+        return f"<b>{html.escape(self.title)}</b> ({self.charts} charts)<ol>{titles}</ol>"

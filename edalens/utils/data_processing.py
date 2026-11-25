@@ -51,7 +51,31 @@ def describe_operation(operation: Operation) -> str:
     if op_type == "remove_nan":
         return "Removed rows with missing values"
     if op_type == "impute":
-        return "Imputed missing values (KNN numeric, mode categorical)"
+        numeric = operation.get("numeric", "knn")
+        numeric = f"KNN (k={operation.get('k', KNN_NEIGHBORS)})" if numeric == "knn" else numeric
+        where = f" in {', '.join(map(str, operation['columns']))}" if operation.get("columns") else ""
+        return f"Imputed missing values{where} (numeric: {numeric}, categorical: {operation.get('categorical', 'mode')})"
+    if op_type == "drop_columns_missing":
+        return f"Dropped columns with more than {operation['max_pct']}% missing"
+    if op_type == "rename_columns":
+        return "Renamed " + ", ".join(f"{a} → {b}" for a, b in operation["mapping"].items())
+    if op_type == "to_datetime":
+        return f"Parsed {operation['column']} as dates (dayfirst: {operation['dayfirst']})"
+    if op_type == "filter_rows":
+        if "values" in operation:
+            return f"Kept rows where {operation['column']} is one of {', '.join(map(str, operation['values']))}"
+        return f"Kept rows where {operation['column']} is between {operation['min']} and {operation['max']}"
+    if op_type == "bin_numeric":
+        return f"Binned {operation['column']} into {operation['bins']} {operation['method']} bins as {operation['name']}"
+    if op_type == "recode_values":
+        return f"Recoded {operation['column']}: " + ", ".join(f"{a} → {b}" for a, b in operation["mapping"].items())
+    if op_type == "category_order":
+        return f"Ordered {operation['column']}: {', '.join(map(str, operation['order']))}"
+    if op_type == "drop_duplicates":
+        return "Removed duplicate rows"
+    if op_type == "remove_outliers":
+        return (f"Removed {operation['method']} outliers (threshold {operation['threshold']}) in "
+                f"{', '.join(map(str, operation['columns']))}")
     return f"Unknown operation {op_type!r}"
 
 
@@ -224,23 +248,55 @@ def _is_mode_imputed(series: pd.Series) -> bool:
     )
 
 
-def _impute(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
-    """KNN-impute numeric columns and mode-impute text/categorical/boolean ones.
+NUMERIC_IMPUTERS = ("knn", "mean", "median", "zero", "interpolate", "none")
+CATEGORICAL_IMPUTERS = ("mode", "missing", "none")
+MISSING_LABEL = "Missing"
 
+
+def _impute(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    """Fill missing values; by default KNN for numeric columns and the mode for
+    text/categorical/boolean ones (the operation's original behaviour).
+
+    Options: ``numeric`` in NUMERIC_IMPUTERS (``k`` neighbours for KNN, which uses
+    every numeric column as features), ``categorical`` in CATEGORICAL_IMPUTERS
+    ("missing" fills with the label "Missing"), and ``columns`` to fill only some.
     Datetime-like and all-missing columns are left unchanged. Columns without
     missing values keep their exact dtype; column order and index never change.
     """
+    numeric_method = operation.get("numeric", "knn")
+    categorical_method = operation.get("categorical", "mode")
+    if numeric_method not in NUMERIC_IMPUTERS or categorical_method not in CATEGORICAL_IMPUTERS:
+        raise OperationError(f"Unknown imputation method: {numeric_method!r} / {categorical_method!r}.")
+    k = int(operation.get("k", KNN_NEIGHBORS))
+    if k < 1:
+        raise OperationError("KNN needs at least one neighbour.")
+    only = operation.get("columns")
+    if only:
+        _require_columns(df, only, "Columns to impute")
+    wanted = set(only) if only else set(df.columns)
     result = df.copy()
     features = [
         column
         for column in result.columns
         if _is_knn_numeric(result[column]) and result[column].notna().any()
     ]
-    targets = [column for column in features if result[column].isna().any()]
+    targets = [column for column in features if result[column].isna().any() and column in wanted]
+    if targets and numeric_method in ("mean", "median", "zero", "interpolate"):
+        for column in targets:
+            series = result[column]
+            if numeric_method == "interpolate":
+                filled = series.astype("float64").interpolate(limit_direction="both")
+            else:
+                value = {"mean": series.mean(), "median": series.median(), "zero": 0}[numeric_method]
+                filled = series.astype("float64").fillna(value)
+            result[column] = filled.astype(_imputed_dtype(series.dtype))
+        targets = []
+    if numeric_method == "none":
+        targets = []
     if targets:
         matrix = result[features].to_numpy(dtype="float64", na_value=np.nan)
         imputer = KNNImputer(
-            n_neighbors=KNN_NEIGHBORS, weights="uniform", metric="nan_euclidean"
+            n_neighbors=k, weights="uniform", metric="nan_euclidean"
         )
         imputed = imputer.fit_transform(matrix)
         if imputed.shape != matrix.shape:
@@ -250,13 +306,146 @@ def _impute(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
                 result[column] = pd.Series(
                     imputed[:, position], index=result.index, name=column
                 ).astype(_imputed_dtype(result[column].dtype))
+    if categorical_method == "none":
+        return result
     for column in result.columns:
         series = result[column]
-        if _is_mode_imputed(series) and series.isna().any():
+        if column in wanted and _is_mode_imputed(series) and series.isna().any():
+            if categorical_method == "missing" and not ptypes.is_bool_dtype(series):
+                if isinstance(series.dtype, pd.CategoricalDtype) and MISSING_LABEL not in series.cat.categories:
+                    series = series.cat.add_categories([MISSING_LABEL])
+                result[column] = series.fillna(MISSING_LABEL)
+                continue
             mode = series.mode(dropna=True)
             if not mode.empty:
                 result[column] = series.fillna(mode.iloc[0])
     return result
+
+
+def _drop_columns_missing(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    limit = float(operation["max_pct"])
+    share = df.isna().mean() * 100 if len(df) else df.isna().sum()
+    keep = [c for c in df.columns if share[c] <= limit]
+    if not keep:
+        raise OperationError(f"Every column has more than {limit}% missing values.")
+    return df.loc[:, keep].copy()
+
+
+def _rename_columns(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    mapping = {old: new for old, new in dict(operation["mapping"]).items() if old != new}
+    _require_columns(df, list(mapping), "Renamed columns")
+    if any(not str(new).strip() for new in mapping.values()):
+        raise OperationError("New column names cannot be empty.")
+    names = [mapping.get(c, c) for c in df.columns]
+    if len(set(names)) != len(names):
+        raise OperationError("Renaming would give two columns the same name.")
+    return df.rename(columns=mapping)
+
+
+def _to_datetime(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    column = operation["column"]
+    _require_columns(df, [column], "Date column")
+    parsed = parse_dates(df[column], operation["dayfirst"])
+    if len(df) and parsed.notna().sum() == 0:
+        raise OperationError(f"No values in column '{column}' could be parsed as dates.")
+    result = df.copy()
+    result[column] = parsed
+    return result
+
+
+def _filter_rows(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    column = operation["column"]
+    _require_columns(df, [column], "Filter column")
+    series = df[column]
+    if "values" in operation:
+        wanted = set(map(str, operation["values"]))
+        keep = series.astype(object).map(str).isin(wanted) & series.notna()
+    else:
+        numbers = pd.to_numeric(series, errors="coerce") if not ptypes.is_datetime64_any_dtype(series) else series
+        low, high = operation.get("min"), operation.get("max")
+        if ptypes.is_datetime64_any_dtype(series):
+            low, high = pd.Timestamp(low) if low is not None else None, pd.Timestamp(high) if high is not None else None
+        keep = numbers.notna()
+        if low is not None:
+            keep &= numbers >= low
+        if high is not None:
+            keep &= numbers <= high
+    result = df[keep]
+    if len(df) and result.empty:
+        raise OperationError("The filter would remove every row.")
+    return result.copy()
+
+
+BIN_METHODS = ("equal-width", "quantile")
+
+
+def _bin_numeric(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    column, bins, name = operation["column"], int(operation["bins"]), operation["name"]
+    _require_columns(df, [column], "Binned column")
+    if name in df.columns and name != column:
+        raise OperationError(f"A column named '{name}' already exists.")
+    if bins < 2:
+        raise OperationError("Use at least two bins.")
+    values = pd.to_numeric(df[column], errors="coerce")
+    if values.notna().sum() < 2:
+        raise OperationError(f"Column '{column}' needs numbers to bin.")
+    if operation["method"] == "quantile":
+        binned = pd.qcut(values, bins, duplicates="drop", precision=3)
+    else:
+        binned = pd.cut(values, bins, precision=3)
+    labels = [str(interval) for interval in binned.cat.categories]
+    result = df.copy()
+    # Ordered categories keep the bins in numeric order in every plot.
+    result[name] = pd.Categorical(binned.astype(object).map(lambda v: str(v) if pd.notna(v) else np.nan),
+                                  categories=labels, ordered=True)
+    return result
+
+
+def _recode_values(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    column = operation["column"]
+    _require_columns(df, [column], "Recoded column")
+    mapping = {str(old): new for old, new in dict(operation["mapping"]).items()}
+    series = df[column]
+    order = list(series.cat.categories) if isinstance(series.dtype, pd.CategoricalDtype) else None
+    text = series.astype(object).map(lambda v: mapping.get(str(v), v) if pd.notna(v) else v)
+    result = df.copy()
+    if order is not None:  # Keep the order; merged values take the first position.
+        categories = list(dict.fromkeys(mapping.get(str(c), c) for c in order))
+        result[column] = pd.Categorical(text, categories=categories, ordered=series.cat.ordered)
+    else:
+        result[column] = text
+    return result
+
+
+def _category_order(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    """Give a text column a fixed category order; plots start from it (values not
+    listed go last, in their current order)."""
+    column = operation["column"]
+    _require_columns(df, [column], "Ordered column")
+    series = df[column]
+    text = series.astype(object).map(lambda v: str(v) if pd.notna(v) else np.nan)
+    present = list(pd.unique(text.dropna()))
+    order = [str(v) for v in operation["order"]]
+    order = [v for v in order if v in present] + [v for v in present if v not in order]
+    result = df.copy()
+    result[column] = pd.Categorical(text, categories=order, ordered=True)
+    return result
+
+
+def _drop_duplicates(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    return df.drop_duplicates().copy()
+
+
+def _remove_outliers(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    from edalens.utils.stats import outlier_mask
+
+    columns = list(operation["columns"])
+    _require_columns(df, columns, "Outlier columns")
+    flags = outlier_mask(df, columns, operation["method"], float(operation["threshold"])).any(axis=1)
+    result = df[~flags]
+    if len(df) and result.empty:
+        raise OperationError("Every row is an outlier with these settings.")
+    return result.copy()
 
 
 _HANDLERS: dict[str, Callable[[pd.DataFrame, Operation], pd.DataFrame]] = {
@@ -267,6 +456,15 @@ _HANDLERS: dict[str, Callable[[pd.DataFrame, Operation], pd.DataFrame]] = {
     "date_features": _date_features,
     "remove_nan": _remove_nan,
     "impute": _impute,
+    "drop_columns_missing": _drop_columns_missing,
+    "rename_columns": _rename_columns,
+    "to_datetime": _to_datetime,
+    "filter_rows": _filter_rows,
+    "bin_numeric": _bin_numeric,
+    "recode_values": _recode_values,
+    "category_order": _category_order,
+    "drop_duplicates": _drop_duplicates,
+    "remove_outliers": _remove_outliers,
 }
 
 

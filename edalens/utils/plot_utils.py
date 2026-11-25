@@ -769,6 +769,54 @@ HISTOGRAM_STATS = ("count", "probability", "percent", "density")
 MAX_STEP_BINS = 60
 
 
+def histogram_edges(values: pd.Series) -> Optional[np.ndarray]:
+    """Equal-width bin edges shared by every group: numpy's "auto" rule, at most
+    MAX_STEP_BINS bins. None when there are no numbers."""
+    values = pd.to_numeric(values, errors="coerce").dropna()
+    if values.empty:
+        return None
+    edges = np.histogram_bin_edges(values, bins="auto")
+    if len(edges) - 1 > MAX_STEP_BINS:
+        edges = np.histogram_bin_edges(values, bins=MAX_STEP_BINS)
+    return edges
+
+
+def _panel_sizes(data: pd.DataFrame, values: pd.Series, panel: list):
+    """A function giving the count of numbers in the panel that ``labels`` belongs to."""
+    present = values.notna()
+    if not panel:
+        total = int(present.sum())
+        return lambda labels: total
+    sizes = present.groupby([data[f] for f in panel], observed=True).sum()
+    return lambda labels: int(sizes.loc[tuple(labels[f] for f in panel) if len(panel) > 1 else labels[panel[0]]])
+
+
+def histogram_weights(
+    frame: pd.DataFrame,
+    x: str,
+    facets: Sequence[Optional[str]] = (),
+    stat: str = "count",
+    cumulative: bool = False,
+) -> tuple[pd.Series, np.ndarray]:
+    """Row weights and bin edges for a histogram normalized over each panel (all
+    colors together, i.e. common norm): summing the weights in a bin gives the
+    color's height in ``stat`` units, so colors add up to the panel's total."""
+    edges = histogram_edges(frame[x])
+    values = pd.to_numeric(frame[x], errors="coerce")
+    panel = [f for f in facets if f]
+    present = values.notna()
+    sizes = present.groupby([frame[f] for f in panel], observed=True).transform("sum") if panel else \
+        pd.Series(present.sum(), index=frame.index)
+    weights = pd.Series(1.0, index=frame.index)
+    if stat in ("probability", "percent", "density"):
+        weights = weights / sizes.replace(0, np.nan)
+    if stat == "density" and not cumulative and edges is not None:
+        weights = weights / (edges[1] - edges[0])
+    if stat == "percent":
+        weights = weights * 100
+    return weights.where(present), edges
+
+
 def step_histogram_frame(
     frame: pd.DataFrame,
     x: str,
@@ -777,30 +825,32 @@ def step_histogram_frame(
     stat: str = "count",
     cumulative: bool = False,
     stacked: bool = False,
+    common_norm: bool = False,
 ) -> pd.DataFrame:
     """Outline points of a step histogram: one closed step line per group.
 
-    All groups share the same bins (numpy's "auto" rule, at most MAX_STEP_BINS),
-    so their outlines are comparable. Each group is normalized by its own size,
-    like Plotly's histnorm. ``stacked`` adds each color on top of the previous
-    ones (in color order) within a panel.
+    All groups share the same bins (histogram_edges), so their outlines are
+    comparable. Each group is normalized by its own size, like Plotly's histnorm,
+    or, with ``common_norm``, by the size of its panel (all colors together), so
+    each color's area is its share. ``stacked`` adds each color on top of the
+    previous ones (in color order) within a panel.
     """
-    values = pd.to_numeric(frame[x], errors="coerce").dropna()
-    if values.empty:
+    edges = histogram_edges(frame[x])
+    if edges is None:
         return pd.DataFrame(columns=[x, "value"])
-    edges = np.histogram_bin_edges(values, bins="auto")
-    if len(edges) - 1 > MAX_STEP_BINS:
-        edges = np.histogram_bin_edges(values, bins=MAX_STEP_BINS)
     widths = np.diff(edges)
     panel = [f for f in facets if f]
     keys = list(dict.fromkeys(k for k in [*panel, hue] if k))
     data = frame.dropna(subset=keys)
+    values = pd.to_numeric(data[x], errors="coerce")
+    panel_sizes = _panel_sizes(data, values, panel)
     groups = data.groupby(keys, observed=True, sort=False) if keys else [((), data)]
     rows = []
     for key, group in groups:
         key = key if isinstance(key, tuple) else (key,)
-        counts, _ = np.histogram(pd.to_numeric(group[x], errors="coerce").dropna(), bins=edges)
-        n = counts.sum()
+        counts, _ = np.histogram(values[group.index].dropna(), bins=edges)
+        labels = dict(zip(keys, key))
+        n = panel_sizes(labels) if common_norm else counts.sum()
         heights = counts.astype(float)
         if stat in ("probability", "percent", "density") and n:
             heights = heights / n
@@ -810,7 +860,7 @@ def step_histogram_frame(
             heights = heights / widths
         if stat == "percent":
             heights = heights * 100
-        rows.append((dict(zip(keys, key)), heights))
+        rows.append((labels, heights))
     if stacked and hue:
         running = {}
         for labels, heights in rows:

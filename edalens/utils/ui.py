@@ -139,8 +139,11 @@ def _chart_actions(fig, key: str) -> None:
         )
 
 
-def plotly_chart(fig, **kwargs) -> None:
-    """``st.plotly_chart`` with the chosen camera format, "Add to report" and a PDF download."""
+def plotly_chart(fig, code: Optional[str] = None, **kwargs) -> None:
+    """``st.plotly_chart`` with the chosen camera format, "Add to report" and a PDF download.
+
+    ``code``: Python that recreates the chart, shown in a "Python code" expander.
+    """
     image_format = st.session_state.get(IMAGE_FORMAT_KEY, "png")
     config = {
         "toImageButtonOptions": {
@@ -152,6 +155,10 @@ def plotly_chart(fig, **kwargs) -> None:
     key = _chart_key()
     st.plotly_chart(fig, config=config, key=key, **kwargs)
     _chart_actions(fig, key)
+    if code:
+        with st.expander("🐍 Python code"):
+            st.caption("Recreates this chart with pandas and plotly express in a notebook or script.")
+            st.code(code, language="python")
 
 
 def pyplot(fig, **kwargs) -> None:

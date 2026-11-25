@@ -11,13 +11,15 @@ def main():
         show_published(published)
         return
     load_preset_data(st.session_state)
-    pages = ["Load data", "Missing Data Imputation", "Visualization", "Time Series", "Report", "About"]
+    pages = ["Load data", "Missing Data Imputation", "Statistics", "Visualization", "Time Series", "Report", "About"]
     with st.sidebar:
         selected = sidebar_menu(
-            "EDALens", pages, icons=["house", "gear", "bar-chart", "clock", "journal-richtext", "info-circle"], menu_icon="cast"
+            "EDALens", pages, icons=["house", "gear", "calculator", "bar-chart", "clock", "journal-richtext", "info-circle"], menu_icon="cast"
         )
-        if selected in ("Visualization", "Time Series", "Report"):
+        if selected in ("Statistics", "Visualization", "Time Series", "Report"):
             export_settings()
+        from edalens.views.session import session_panel
+        session_panel()
     
     if selected == "Load data":
         from edalens.views.home import home
@@ -25,6 +27,9 @@ def main():
     elif selected == "Missing Data Imputation":
         from edalens.views.missing_data import missing_data_imputation
         missing_data_imputation()
+    elif selected == "Statistics":
+        from edalens.views.statistics import statistics
+        statistics()
     elif selected == "Visualization":
         from edalens.views.visualization import visualization
         visualization()

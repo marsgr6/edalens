@@ -94,13 +94,13 @@ def test_imputation_records_history_and_keeps_columns():
     app = loaded_app(missing_data_page, frame)
     app.run()
 
-    button(
-        app, "Impute Missing Values with KNN Imputer (Numeric) and Mode (Categorical)"
-    ).click()
+    button(app, "Impute missing values").click()
     app.run()
 
     assert not app.exception
-    assert app.session_state["operations"] == [{"type": "impute"}]
+    assert app.session_state["operations"] == [
+        {"type": "impute", "numeric": "knn", "k": 5, "categorical": "mode"}
+    ]
     assert app.session_state["is_imputed"] is True
     result = app.session_state["filtered_df"]
     assert list(result.columns) == ["when", "v"]

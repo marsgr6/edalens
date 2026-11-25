@@ -185,3 +185,82 @@ def test_layer_bars_are_translucent_by_default_and_adjustable():
     select(app, "Multiple").set_value("stack")
     app.run()
     assert next(s for s in app.slider if s.label == "Bar opacity").value == 1.0
+
+
+def array(values) -> list:
+    """Plotly >= 6 writes numeric arrays as base64 typed arrays; decode them to lists."""
+    if isinstance(values, dict) and "bdata" in values:
+        import base64
+
+        return np.frombuffer(
+            base64.b64decode(values["bdata"]), dtype=np.dtype(values["dtype"])
+        ).tolist()
+    return list(values)
+
+
+def check(app: AppTest, label: str):
+    return next(c for c in app.checkbox if c.label == label)
+
+
+@pytest.mark.parametrize("common_norm", [False, True])
+def test_step_common_norm_shares_one_total_per_panel(common_norm):
+    frame = tips()
+    steps = step_histogram_frame(
+        frame, "tip", "sex", ("time",), stat="probability", common_norm=common_norm
+    )
+    # Each outline repeats its last height once and opens/closes at 0; the bins are the middle points.
+    totals = steps.groupby(["time", "sex"])["value"].apply(lambda v: v.iloc[1:-2].sum())
+    shares = frame.groupby(["time", "sex"]).size() / frame.groupby("time").size()
+    expected = shares if common_norm else shares * 0 + 1
+    assert totals.to_dict() == pytest.approx(expected.to_dict())
+
+
+@pytest.mark.parametrize("stat, total", [("probability", 1), ("percent", 100)])
+def test_bars_with_common_norm_add_up_to_one_total(stat, total):
+    app = hist_app(color="sex")
+    app.run()
+    select(app, "Stat").set_value(stat)
+    app.run()
+    check(app, "Common Norm").check()
+    app.run()
+    assert not app.exception
+    traces = chart(app)["data"]
+    sums = {t["name"]: sum(array(t["y"])) for t in traces}
+    shares = tips()["sex"].value_counts(normalize=True) * total
+    assert sums == pytest.approx(shares.to_dict())
+    assert {t["histfunc"] for t in traces} == {"sum"}
+    assert chart(app)["layout"]["yaxis"]["title"]["text"] == stat.capitalize()
+
+
+def test_common_norm_needs_a_color_and_a_normalized_stat():
+    app = hist_app()
+    app.run()
+    select(app, "Stat").set_value("probability")
+    app.run()
+    assert check(app, "Common Norm").disabled  # No color.
+    app = hist_app(color="sex")
+    app.run()
+    assert check(app, "Common Norm").disabled  # Counts are not normalized.
+
+
+def area(x: list, y: list) -> float:
+    """Trapezoid rule (np.trapezoid needs numpy 2; CI pins numpy 1.26)."""
+    x, y = np.asarray(x), np.asarray(y)
+    return float(((y[1:] + y[:-1]) / 2 * np.diff(x)).sum())
+
+
+@pytest.mark.parametrize("common_norm", [False, True])
+def test_density_curves_share_their_panels_area(common_norm):
+    app = hist_app(color="sex")
+    app.session_state["viz_state"]["plot_type"] = "density 1"
+    app.session_state["_plot_type_selector"] = "density 1"
+    app.run()
+    if common_norm:
+        check(app, "Common Norm").check()
+        app.run()
+    assert not app.exception
+    areas = {t["name"]: area(array(t["x"]), array(t["y"])) for t in chart(app)["data"]}
+    shares = tips()["sex"].value_counts(normalize=True)
+    expected = shares if common_norm else shares * 0 + 1
+    # The curves are drawn over the data range, so a little of each tail is cut off.
+    assert areas == pytest.approx(expected.to_dict(), abs=0.06)

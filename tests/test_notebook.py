@@ -125,7 +125,7 @@ def test_app_starts_with_the_preloaded_dataframe(tmp_path, monkeypatch):
     assert not app.exception
     assert app.session_state["data_loaded"] is True
     assert list(app.session_state["filtered_df"].columns) == ["x", "c"]
-    assert len(app.dataframe) == 1  # The processed-data preview is shown.
+    assert app.dataframe  # The processed-data preview is shown.
 
 
 def fake_colab(monkeypatch):

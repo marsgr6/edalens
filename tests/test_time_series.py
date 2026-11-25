@@ -143,3 +143,78 @@ def test_changepoints_run_for_several_variables(monkeypatch):
     app.run()
     assert not app.exception, app.exception
     assert len(app.get("plotly_chart")) >= 2  # A changepoint chart per variable.
+
+
+SECTIONS = [
+    "Time Series Visualization",
+    "Decomposition & ACF/PACF",
+    "Anomaly Detection",
+    "Temporal Profiles",
+    "Calendar Heatmap",
+    "Heatmap Profiles",
+    "Forecasting",
+    "Changepoint Analysis",
+    "Trend Analysis",
+]
+
+
+def daily_csv(days: int = 730) -> bytes:
+    import numpy as np
+
+    dates = pd.date_range("2022-01-01", periods=days, freq="D")
+    t = np.arange(days)
+    rng = np.random.default_rng(5)
+    frame = pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "load": 100
+            + 0.05 * t
+            + 10 * np.sin(2 * np.pi * t / 365)
+            + rng.normal(0, 2, days),
+            "temp": 15
+            + 8 * np.sin(2 * np.pi * (t - 30) / 365)
+            + rng.normal(0, 1, days),
+        }
+    )
+    return frame.to_csv(index=False).encode()
+
+
+def section_app(monkeypatch) -> AppTest:
+    import requests
+
+    class Response:
+        content = daily_csv()
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(
+        sys, "platform", "emscripten"
+    )  # Radio menu, drivable in AppTest.
+    app = AppTest.from_function(time_series_page, default_timeout=180)
+    app.run()
+    next(r for r in app.radio if r.label == "Select data source").set_value(
+        "GitHub Link"
+    )
+    app.run()
+    app.text_input[0].set_value("https://example.com/daily.csv")
+    app.run()
+    return app
+
+
+@pytest.mark.parametrize(
+    "several", [False, True], ids=["one variable", "two variables"]
+)
+@pytest.mark.parametrize("section", SECTIONS)
+def test_every_section_opens_with_its_defaults(monkeypatch, section, several):
+    # Catches crashes (like a misspelled helper) in sections no other test opens.
+    app = section_app(monkeypatch)
+    app.sidebar.radio[0].set_value(section)
+    app.run()
+    if several:
+        next(c for c in app.sidebar.checkbox if "multiple" in c.label).check()
+        app.run()
+        app.sidebar.multiselect[0].set_value(["load", "temp"])
+        app.run()
+    assert not app.exception, app.exception[0].message

@@ -30,19 +30,44 @@ data), the page shows an error and keeps the previous data and history.
 | Melt Data | Reshape wide → long; chosen ID columns stay, the rest become `variable` / `value` |
 | Date Feature Engineering | Parse a date column (day-first optional) and add `Year`, `Month`, `Day`, `DayOfWeek`, `Hour`; unparseable dates become missing |
 
+### Data cleaning
+
+Each tool is a step in the operation history, so **Undo** and saved sessions replay it.
+
+| Tool | What it does |
+|---|---|
+| Rename a column | New name; refused if it would duplicate another column |
+| Order category labels | Fix the order of a text column's labels: current, A → Z / Z → A (numbers inside labels sort as numbers: item 2 before item 10), most/least frequent, or calendar (months, weekdays), then adjust by hand. Plots start from this order; each plot's Custom Order can still change it |
+| Parse a column as dates | Turn date text into a date column (day-first optional); values that are not dates become missing, and the page shows how many |
+| Filter rows | Keep a range of a numeric column, a date range, or chosen values of a text column |
+| Bin a numeric column | New categorical column of equal-width or quantile bins, ordered from low to high |
+| Recode values | Edit a table of labels to fix typos or merge labels (give several the same new value) |
+
 Then *Preview* the result and *Download Processed Data as CSV*.
 
 ## 2. Missing Data Imputation
 
 - Table of missing count and % per column.
 - **Remove Rows with Any Missing Values.** Refused if every row has a missing value.
-- **Impute:** numeric columns with `KNNImputer(n_neighbors=5)`, text, categorical
-  and boolean columns with the most frequent value. All columns are kept in
-  their order. Integer columns that receive imputed values become decimal
-  columns. Date and completely empty columns are not imputed; the page lists
-  any columns that still have missing values.
+- **Drop mostly-empty columns** above a chosen % of missing values.
+- **Impute** the chosen columns. Numeric: KNN (`KNNImputer`, k neighbours,
+  default 5, using every numeric column to find similar rows), mean, median,
+  zero, interpolation (row order, e.g. time series) or leave missing. Text,
+  categorical and boolean: the most frequent value, a "Missing" label, or leave
+  missing. All columns are kept in their order. Integer columns that receive
+  imputed values become decimal columns. Date and completely empty columns are
+  not imputed; the page lists any columns that still have missing values.
 
-## 3. Visualization
+## 3. Statistics
+
+| Section | What you get |
+|---|---|
+| Summary | One row per column: type, missing count and %, unique values; for numbers mean, median, SD, min, max, skew and the outlier count (IQR or z-score); the most common label for text. Duplicate rows are counted, listed and can be removed. **➕ Add table to report** |
+| Compare groups | A numeric column across the groups of a categorical one: Welch's t-test (2 groups) or one-way ANOVA, or rank-based Mann-Whitney U / Kruskal-Wallis; effect sizes (Cohen's d, rank-biserial r, η², ε²) with small/medium/large labels; group table and box plot. Two categorical columns: chi-square test of independence with Cramér's V and the contingency table |
+| Correlations | Pearson, Spearman or Kendall matrix of chosen numeric columns, the strongest pairs with p-values, and Cramér's V between categorical columns |
+| Outliers | Flag values by IQR (k × IQR beyond the quartiles) or z-score (k SD from the mean) in chosen columns; counts per column, flagged rows with the outlying values highlighted, and **Exclude these rows** (a step in the history, so it applies to every page) |
+
+## 4. Visualization
 
 Choose a plot type, then map columns to **X, Y, Color, Facet Col, Facet Row, Size**.
 By default only sensible column types are offered; tick **Risk It All** in the
@@ -52,10 +77,10 @@ sidebar to allow any column in any role.
 |---|---|---|
 | bars | Y = None: rows counted per X (a count plot). Numeric Y: its total, mean, median, min, max or count per X (e.g. monthly kWh) | Show as counts/values or percent of total, within X or within color; grouped or stacked; value labels; error bars (SD or 95 % CI) for means; a date X (datetime or date text) on a time axis, grouped by week, month, quarter or year; bars or heatmap |
 | boxes | Distribution per group | Box or violin, swarm overlay, CI bands (68/95/99 %) |
-| lineplot | Trends across an ordered X | Mean/Median/Sum/Min/Max per X step or raw values; date X on a time axis (grouped by week/month/quarter/year); CI or SD as a band or error bars; line style/width by column |
-| histogram | One numeric distribution | layer/dodge/stack, count/probability/percent/density, bars/step |
-| density 1 | Smoothed 1-D distribution (KDE) | layer/stack, cumulative, normalize |
-| density 2 | Joint distribution of two numerics | 2-D histogram or KDE contours; optional rug on both axes |
+| lineplot | Trends across an ordered X (categories, dates or numbers) | Mean/Median/Sum/Min/Max per X step or raw values; date X on a time axis (grouped by week/month/quarter/year); CI or SD as a band or error bars; line style/width by column |
+| histogram | One numeric distribution | layer/dodge/stack, count/probability/percent/density, bars/step; **Common Norm** normalizes all colors of a panel together (each color's area is its share) instead of each on its own |
+| density 1 | Smoothed 1-D distribution (KDE) | layer/stack, cumulative, Common Norm (each curve's area is its share of the panel) |
+| density 2 | Joint distribution of two numerics | 2-D histogram (density or counts) or KDE contours; optional rug on both axes |
 | scatter | Two numerics, or three in 3D | Symbol by category, size by numeric (min-max enhance). **3D Scatter** adds a Z variable (rotatable; colour, symbol, size and opacity still apply; facets are not available in 3D) with optional projections onto the walls |
 | catplot | Numeric vs category, every point | strip or swarm |
 | missingno | Missing-data structure | matrix, bars, heatmap (nullity correlation), dendrogram |
@@ -77,6 +102,16 @@ chart's toolbar saves it as PNG, SVG, JPEG or WebP: pick the format in the
 sidebar under **📷 Chart export**. In browser mode only the camera icon is
 available.
 
+Under the main plot types (bars, boxes, lineplot, histogram, scatter, catplot,
+correlation) **🐍 Python code** shows pandas and plotly express code that
+recreates the chart from the processed CSV, with the same columns, settings and
+category orders; finishing touches EDALens adds (bar labels, step outlines, mean
+markers) are noted in comments.
+
+Scatter, catplot, pairplot, regression and density 2 draw a random sample of
+50,000 rows when the data is larger, so the browser stays responsive; tick **Use
+all rows** in the sidebar to draw every row.
+
 Facet Col and Facet Row apply to bars, boxes, lineplot, histogram, both
 densities, scatter (2D) and catplot; other plots say so when a facet is set.
 
@@ -91,7 +126,7 @@ A custom order belongs to its column, not to a plot: reordering `day` (or leavin
 a category out) applies to every plot and role where `day` appears, until new
 data is loaded. Lines, bars, boxes and facet panels are drawn in that order.
 
-## 4. Time Series
+## 5. Time Series
 
 This page has its **own loader** (sidebar → *Load Data*): upload or GitHub link,
 choose the date column and date format (DD/MM vs MM/DD). The format only decides
@@ -116,25 +151,39 @@ format would parse more of them); data is sorted and indexed by date.
 | Changepoint Analysis | Prophet changepoints, selected by importance percentile (Auto) or a fixed count |
 | Trend Analysis | Linear and quadratic trend lines over the observed series |
 
-## 5. Report
+## 6. Report
 
-Click **➕ Add to report** under any chart on Visualization or Time Series to save
-it. The **Report** page collects the saved charts in order:
+Click **➕ Add to report** under any chart on Visualization or Time Series (or
+under a table on Statistics) to save it. The **Report** page collects them in order:
 
 - Edit each chart's title and an optional note; move it up or down, or remove it.
+- **📝 Add a text block**: a heading and a paragraph across the page, to split the
+  report into sections. Tables (summary statistics, test results) show as tables.
+- The HTML page starts with a clickable table of contents; the PDF's first page
+  lists the contents. Tables longer than 30 rows show their first 30 in the PDF.
 - Choose a 1- or 2-column dashboard and preview it on the page.
 - **🌐 Build HTML** downloads a single static page with interactive charts
   (plotly.js embedded for offline use, or loaded from the CDN).
 - **📄 Build PDF** writes a contents page and one page per chart (title and note
   on top), scaled by the sidebar's PDF text and line size.
-- **🔗 Publish link** serves the page from the app at `?report=<id>` until the
-  server restarts.
+- **🔗 Publish link** serves the page from the app at `?report=<id>`. Published
+  pages are saved in `~/.edalens/published` (or `EDALENS_PUBLISH_DIR`) and keep
+  working after restarts; the newest 100 are kept.
 - **💾 Send to Python** saves the report for `app.report()` when the app was
   started with `edalens.walk(df)` or `edalens.show()`.
 
-The report lives in the browser session: reloading the page starts a new, empty one.
+The report lives in the browser session: reloading the page starts a new, empty
+one. To keep it, save the session (below).
 
-## 6. Example datasets
+### Saving a session
+
+**💾 Session** in the sidebar (every page) saves one JSON file with the data
+(optional), every step from Load data, Missing Data and Statistics, the
+Visualization page's plot and mappings, custom category orders and the report.
+**Open a session** replays the steps and brings everything back. A session saved
+without its data opens after loading the same data.
+
+## 7. Example datasets
 
 From [marsgr6/r-scripts › data/viz_data](https://github.com/marsgr6/r-scripts/tree/master/data/viz_data):
 

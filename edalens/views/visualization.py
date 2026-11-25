@@ -12,19 +12,22 @@ import itertools
 from scipy.stats import t
 
 from edalens.utils.data_processing import parse_dates
+from edalens.utils import codegen
 from edalens.utils.ui import plotly_chart, start_charts
 from edalens.utils.plot_utils import (
     ADDITIVE_AGGREGATIONS, BAR_AGGREGATIONS, BAR_ERRORS, BAR_SCALES, DATE_GROUPS,
     CANDLE_SOURCES, FIT_METHODS, HEATMAP_ROW_ORDERS, HEATMAP_SCALINGS, MARGINAL_KINDS,
     bar_figure, bar_summary, candlestick_figure, date_labels, date_values, group_dates, has_weekend_dates,
     LINE_AGGREGATIONS, LINE_INTERVALS, RAW_VALUES, _rgba, line_summary, line_widths,
-    fill_steps, histogram_bars, step_histogram_frame, numeric_heatmap_figure, ohlc_frame, regression_figure,
+    fill_steps, histogram_bars, histogram_weights, step_histogram_frame, numeric_heatmap_figure, ohlc_frame, regression_figure,
     waterfall_figure, waterfall_frame,
 )
 
 warnings.filterwarnings('ignore')
 
 LINEPLOT_ROW_GAP_PX = 110
+SAMPLE_ROWS = 50_000
+SAMPLED_PLOTS = ('scatter', 'catplot', 'pairplot', 'regression', 'density 2')
 
 
 def is_text_like(values) -> bool:
@@ -108,9 +111,12 @@ def visualization():
     numeric_cols = st.session_state["current_numeric_cols"]
     categorical_cols = st.session_state["current_categorical_cols"]
 
-    # Convert categorical columns to strings
+    # Category orders set on the Load data page are where the plots' Custom Order starts.
+    data_orders = {}
     for col in data.select_dtypes(include='category').columns:
-        data[col] = data[col].astype('str')
+        data_orders[col] = [str(c) for c in data[col].cat.categories]
+        # Plain text from here on (missing values stay missing, not "nan").
+        data[col] = data[col].astype(object).map(lambda v: str(v) if pd.notna(v) else v)
 
     # Define plot types
     PLOT_TYPES = [
@@ -150,6 +156,8 @@ def visualization():
                 x_opts = categorical_cols.copy() if categorical_cols else data.columns.tolist()
                 if plot in ('bars', 'lineplot'):  # Datetime columns too: dates can be grouped by month, year...
                     x_opts += [c for c in data.columns if pd.api.types.is_datetime64_any_dtype(data[c]) and c not in x_opts]
+                if plot == 'lineplot':  # And numbers (age, dose, temperature...): one point per value, in numeric order.
+                    x_opts += [c for c in numeric_cols if c not in x_opts]
             else:  # scatter, histogram, density 1/2, regression, ridges
                 x_opts = numeric_cols.copy() if numeric_cols else data.columns.tolist()
             if plot == 'ridges':
@@ -226,6 +234,8 @@ def visualization():
         if saved:
             default = [v for v in saved["order"] if v in present]
             default += [v for v in present if v not in saved["known"]]
+        elif var in data_orders:  # The order set on the Load data page.
+            default = [v for v in data_orders[var] if v in present] + [v for v in present if v not in data_orders[var]]
         else:
             default = present
         # A stable key keeps the widget (and an open dropdown) steady while it is edited;
@@ -376,6 +386,14 @@ def visualization():
     
     PALETTE = px.colors.qualitative.Set2
 
+    # Point-per-row plots slow the browser down on big data: draw a random sample unless asked.
+    if plot_type in SAMPLED_PLOTS and len(data) > SAMPLE_ROWS:
+        total = len(data)
+        if not st.sidebar.checkbox(f"Use all {total:,} rows (may be slow)", value=False, key="viz_use_all_rows"):
+            data = data.sample(SAMPLE_ROWS, random_state=0).sort_index()
+            st.info(f"ℹ️ Showing a random sample of {SAMPLE_ROWS:,} of {total:,} rows so the page stays "
+                    "responsive. Tick **Use all rows** in the sidebar for every row.")
+
     def render_side_by_side(config_fn, plot_fn, config_width=0.32):
         config_col, plot_col = st.columns([config_width, 1 - config_width], gap="large")
         with config_col:
@@ -391,7 +409,7 @@ def visualization():
             corr_matrix = data_c.select_dtypes(include=np.number).corr()
             fig = px.imshow(corr_matrix, text_auto=True, color_continuous_scale='Viridis', 
                            title="Correlation Matrix", width=800, height=600)
-            plotly_chart(fig)
+            plotly_chart(fig, code=codegen.correlation())
 
         elif plot_type == "clustermap":
             with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
@@ -699,9 +717,11 @@ def visualization():
                     # A date X (datetime column, or text that is all dates) is plotted on a time
                     # axis in date order, optionally grouped by week, month, quarter or year.
                     x_dates = date_values(plot_data[var_x])
+                    dayfirst_x = True
                     if x_dates is not None and not pd.api.types.is_datetime64_any_dtype(plot_data[var_x]):
                         if not st.checkbox("Day First when X holds dates (e.g., 31/12/2023)", value=True):
                             x_dates = date_values(plot_data[var_x], dayfirst=False)
+                            dayfirst_x = False
                     date_group = None
                     if x_dates is not None:
                         date_group = st.selectbox(f"Group dates in {var_x} by", list(DATE_GROUPS), index=0,
@@ -753,7 +773,14 @@ def visualization():
                     fig.update_xaxes(title=hue, type="category")
                     fig.update_yaxes(title=var_x, type="category")
 
-                plotly_chart(fig)
+                code = None
+                if tplot == "bars":
+                    code = codegen.bars(
+                        var_x, var_y, hue, (facet_col, facet_row), aggregation, scale, error, stacked,
+                        category_orders, title, value_label,
+                        # The CSV holds dates as text, so the code always parses them.
+                        dates=codegen.dates_block(var_x, dayfirst_x, date_group) if x_dates is not None else None)
+                plotly_chart(fig, code=code)
 
             elif plot_type == 'boxes':
                 var_x_used = global_var_x
@@ -948,7 +975,13 @@ def visualization():
                             ys = trace.y if orientation == 'v' else trace.x
                             if ys is not None and len(ys) > 0: trace.update(spanmode='manual', span=[min(ys), max(ys)])
 
-                plotly_chart(fig, width="content" if single_var else "stretch")
+                notes = [n for n, on in (("# EDALens also marks each group's mean ± CI.", band_interval),
+                                         ("# EDALens also overlays a swarm of the points.", swarm_points)) if on]
+                code = codegen.simple(
+                    "box" if tplot == "boxplot" else "violin", x=var_x_used, y=var_y_used, color=hue_used,
+                    facet_col=facet_col_used, facet_row=facet_row_used, box=True if tplot == "violin" else None,
+                    category_orders=category_orders, note="\n".join(notes) or None)
+                plotly_chart(fig, code=code, width="content" if single_var else "stretch")
 
             elif plot_type == 'lineplot':
                 var_x = global_var_x
@@ -987,9 +1020,11 @@ def visualization():
                     # A date X (datetime column, or text that is all dates) is plotted on a time
                     # axis in date order, optionally grouped by week, month, quarter or year.
                     x_dates = date_values(plot_data[var_x])
+                    dayfirst_x = True
                     if x_dates is not None and not pd.api.types.is_datetime64_any_dtype(plot_data[var_x]):
                         if not st.checkbox("Day First when X holds dates (e.g., 31/12/2023)", value=True):
                             x_dates = date_values(plot_data[var_x], dayfirst=False)
+                            dayfirst_x = False
                     date_group = None
                     if x_dates is not None:
                         date_group = st.selectbox(f"Group dates in {var_x} by", list(DATE_GROUPS), index=0,
@@ -1088,7 +1123,11 @@ def visualization():
                 elif var_x in category_orders:
                     # All panels show the X steps in the chosen order, even where a line lacks some.
                     fig.update_xaxes(type="category", categoryorder="array", categoryarray=category_orders[var_x])
-                plotly_chart(fig)
+                code = codegen.lineplot(
+                    var_x, var_y, line_keys + panel_keys, hue_used, style_used, facet_col_used, facet_row_used,
+                    aggregation, interval, show_markers, category_orders, f"Lineplot: {y_title} by {x_title}", y_title,
+                    dates=codegen.dates_block(var_x, dayfirst_x, date_group) if x_dates is not None else None)
+                plotly_chart(fig, code=code)
 
             elif plot_type == 'ridges':
                 var_x = global_var_x
@@ -1189,9 +1228,14 @@ def visualization():
                                            help="Fill under each step outline; 0 draws the outline only.") if element == "step" else 0.0
                     bar_opacity = st.slider("Bar opacity", 0.1, 1.0, 0.6 if multiple == "layer" else 1.0, 0.05,
                                             help="Below 1, layered colors show through each other.") if element == "bars" else 1.0
-                    common_norm = st.checkbox("Common Norm", value=False)
+                    common_norm = st.checkbox(
+                        "Common Norm", value=False, disabled=stat == "count" or hue_var == "None",
+                        help="On: all colors in a panel are normalized together, so each color's area is its share "
+                             "of the panel. Off: each color is normalized on its own (each has area 1 or 100%). "
+                             "Needs a Color and a stat other than count.")
+                    common_norm = common_norm and stat != "count" and hue_var != "None"
                     cumulative = st.checkbox("Cumulative", value=False)
-                    
+
                     plot_data = data.copy()
                     if hue_var != "None" and hue_var in plot_data.columns: plot_data[hue_var] = plot_data[hue_var].astype(str)
 
@@ -1208,7 +1252,7 @@ def visualization():
                     steps = step_histogram_frame(
                         plot_data, var_x, hue_used,
                         (facet_col if facet_col != "None" else None, facet_row if facet_row != "None" else None),
-                        stat=stat, cumulative=cumulative, stacked=multiple == "stack",
+                        stat=stat, cumulative=cumulative, stacked=multiple == "stack", common_norm=common_norm,
                     )
                     fig = px.line(
                         steps, x=var_x, y="value", color=hue_used, line_shape="hv",
@@ -1220,6 +1264,20 @@ def visualization():
                     fill_steps(fig, fill_alpha)
                     if multiple == "dodge":
                         st.caption("Step outlines are drawn on top of each other; dodge applies to bars.")
+                elif common_norm:
+                    # Plotly's histnorm normalizes each color alone; weights normalize per panel instead.
+                    facets = (facet_col if facet_col != "None" else None, facet_row if facet_row != "None" else None)
+                    plot_data["_weight"], edges = histogram_weights(plot_data, var_x, facets, stat, cumulative)
+                    fig = px.histogram(
+                        plot_data, x=var_x, y="_weight", histfunc="sum", color=hue_var,
+                        facet_col=facets[0], facet_row=facets[1], cumulative=cumulative,
+                        category_orders=category_orders, color_discrete_sequence=PALETTE, width=800, height=600,
+                        labels={"_weight": stat.capitalize()},
+                    )
+                    if edges is not None:
+                        fig.update_traces(xbins=dict(start=edges[0], end=edges[-1], size=edges[1] - edges[0]))
+                    fig.for_each_yaxis(lambda axis: axis.update(title_text=stat.capitalize()) if axis.title.text else None)
+                    histogram_bars(fig, multiple, bar_opacity)
                 else:
                     fig = px.histogram(
                         plot_data, x=var_x, color=hue_var if hue_var != "None" else None,
@@ -1228,7 +1286,11 @@ def visualization():
                         category_orders=category_orders, color_discrete_sequence=PALETTE, width=800, height=600
                     )
                     histogram_bars(fig, multiple, bar_opacity)
-                plotly_chart(fig)
+                code = codegen.histogram(
+                    var_x, hue_var if hue_var != "None" else None, facet_col if facet_col != "None" else None,
+                    facet_row if facet_row != "None" else None, stat, cumulative, multiple,
+                    bar_opacity if element == "bars" else 1.0, category_orders, element == "step", common_norm)
+                plotly_chart(fig, code=code)
 
             elif plot_type in ["density 1", "density 2"]:
                 var_x = global_var_x
@@ -1243,14 +1305,17 @@ def visualization():
                 with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
                     if plot_type == "density 1":
                         multiple = st.selectbox("Multiple", ["layer", "stack"])
-                        common_norm = st.checkbox("Common Norm (Normalize)", value=False)
+                        common_norm = st.checkbox(
+                            "Common Norm", value=False, disabled=hue_var == 'None',
+                            help="On: all colors in a panel are normalized together, so each curve's area is its "
+                                 "share of the panel. Off: each curve has area 1. Needs a Color.") and hue_var != 'None'
                         cumulative = st.checkbox("Cumulative Density", value=False)
                         show_scatter = False
                         kde_style = "Filled"
                         gradient_alpha = False
                     else:
                         kind = st.selectbox("Kind", ["hist", "kde"])
-                        common_norm = st.checkbox("Common Norm (Normalize)", value=False)
+                        show_counts = st.checkbox("Show counts instead of density", value=False) if kind == "hist" else False
                         rug = st.checkbox("Add Rug Plot?", value=False)
                         
                         show_scatter = st.checkbox("Show Scatter Plot Overlay", value=False) if kind == "kde" else False
@@ -1341,7 +1406,8 @@ def visualization():
                                 if cumulative:
                                     density = np.cumsum(density)
                                     density = density / density[-1]
-                                if common_norm and not cumulative: density = density / density.max()
+                                if common_norm:  # This color's share of the panel's values.
+                                    density = density * len(x_data) / group_df.dropna(subset=[hue_var])[var_x].notna().sum()
                                 y_values = density + offset if multiple == "stack" else density
 
                                 fig.add_trace(
@@ -1359,7 +1425,7 @@ def visualization():
                         fig = px.density_heatmap(
                             plot_data, x=var_x, y=var_y, facet_col=facet_col if facet_col != 'None' else None, facet_row=facet_row if facet_row != 'None' else None,
                             # A list, not 'Viridis': px builds the rug's colour from the scale and fails on the name.
-                            color_continuous_scale=px.colors.sequential.Viridis, histnorm='probability density' if not common_norm else None,
+                            color_continuous_scale=px.colors.sequential.Viridis, histnorm=None if show_counts else 'probability density',
                             marginal_x='rug' if rug else None, marginal_y='rug' if rug else None, width=800, height=600, category_orders=category_orders
                         )
                     else:
@@ -1506,7 +1572,15 @@ def visualization():
                     fig.update_layout(scene=dict(xaxis_title=var_x, yaxis_title=var_y, zaxis_title=var_z), margin=dict(l=0, r=0, t=40, b=0))
                 else:
                     fig = px.scatter(**scatter_kwargs)
-                plotly_chart(fig)
+                shown = {k: v for k, v in scatter_kwargs.items() if k not in ("data_frame", "width", "height")}
+                note = None
+                if not isinstance(shown.get("size"), str):  # No Size column: equal markers.
+                    shown.pop("size", None), shown.pop("size_max", None)
+                elif shown["size"] == "size_for_plot":
+                    shown["size"] = size
+                    note = "# EDALens rescales the sizes to 10-50 (Min-Max Normalize)."
+                code = codegen.simple("scatter_3d" if plot_3d else "scatter", note=note, **shown)
+                plotly_chart(fig, code=code)
 
             elif plot_type == 'catplot':
                 var_x = global_var_x
@@ -1588,7 +1662,10 @@ def visualization():
                     else: fig.update_traces(marker=dict(size=global_point_size))
                     if kind == "swarm": fig.update_traces(jitter=0.3)
 
-                plotly_chart(fig)
+                code = codegen.simple(
+                    "strip", x=var_x, y=var_y, color=hue, facet_col=col, facet_row=row, category_orders=category_orders,
+                    note="# EDALens sizes the points by the Size column." if size_var != 'None' else None)
+                plotly_chart(fig, code=code)
 
             elif plot_type == 'regression':
                 var_x = global_var_x
