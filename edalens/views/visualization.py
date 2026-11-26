@@ -20,13 +20,18 @@ from edalens.utils.plot_utils import (
     bar_figure, bar_summary, candlestick_figure, date_labels, date_values, group_dates, has_weekend_dates,
     LINE_AGGREGATIONS, LINE_INTERVALS, RAW_VALUES, _rgba, line_summary, line_widths,
     fill_steps, histogram_bars, histogram_weights, step_histogram_frame, numeric_heatmap_figure, ohlc_frame, regression_figure,
-    waterfall_figure, waterfall_frame,
+    waterfall_figure, waterfall_frame, facet_levels, facet_panels, facet_regression, regression_stats,
+    rug_position, rug_trace,
 )
 
 warnings.filterwarnings('ignore')
 
 LINEPLOT_ROW_GAP_PX = 110
 SAMPLE_ROWS = 50_000
+# Gap between categories for boxes, violins and their mean markers: the same value keeps
+# each color's mean ± CI centred on its box (Plotly places both by the gap).
+GROUP_GAP = 0.3
+CI_STYLES = ("Points and error bars", "Line and band")
 SAMPLED_PLOTS = ('scatter', 'catplot', 'pairplot', 'regression', 'density 2')
 
 
@@ -84,7 +89,7 @@ def ordered_categories(values, order):
     """``values`` as an ordered categorical in ``order``; values left out of it become missing."""
     return pd.Categorical(values.where(values.isin(order)), categories=list(order), ordered=True)
 # Plot types drawn with one panel per Facet Col / Facet Row value.
-FACET_PLOTS = ('bars', 'boxes', 'lineplot', 'histogram', 'density 1', 'density 2', 'scatter', 'catplot')
+FACET_PLOTS = ('bars', 'boxes', 'lineplot', 'histogram', 'density 1', 'density 2', 'scatter', 'catplot', 'regression')
 
 def visualization():
     start_charts()
@@ -819,14 +824,23 @@ def visualization():
                         st.warning("Could not determine a numeric variable for the boxplot distribution.")
                         return
 
-                show_swarm_checkbox = (facet_col_used is None and facet_row_used is None and (hue_used is None or hue_used == cat_var))
+
+                # A color equal to X gives each category one box: nothing to place side by side.
+                hue_is_x = bool(hue_used) and hue_used == cat_var
+                grouped = bool(hue_used) and not hue_is_x
 
                 with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
                     tplot = st.selectbox("Plot Type", ["boxplot", "violin"])
-                    swarm_points = st.checkbox("Overlay Swarm of Points", value=False) if show_swarm_checkbox else False
+                    swarm_points = st.checkbox("Overlay Swarm of Points", value=False)
                     band_interval = st.checkbox("Show Band Interval (CI around means)", value=False)
                     # leftover time_series checkbox removed (only relevant for lineplot)
                     ci_level = st.selectbox("Confidence Interval Level", ["68%", "95%", "99%"], index=1) if band_interval else "95%"
+                    # Several colors or panels: a line and band per color crowd the plot; points stay readable.
+                    busy = bool(facet_col_used or facet_row_used or hue_used)
+                    ci_style = st.selectbox("Mean ± CI shown as", CI_STYLES, index=0 if busy else 1,
+                                            key=f"box_ci_style_{busy}", help="Points: each group's mean with its error bar, "
+                                            "on its box. Line and band: means joined across the X categories.") \
+                        if (band_interval and cat_var) else CI_STYLES[0]
                     ci_level_value = {"68%": 0.68, "95%": 0.95, "99%": 0.99}[ci_level]
 
                     plot_data = data.copy()
@@ -878,7 +892,7 @@ def visualization():
                         values, cat_values = sub[num_var], None
 
                     trace_name = str(grp) if grp is not None else num_var
-                    color = PALETTE[i % len(PALETTE)]
+                    color = px.colors.qualitative.Set2[i % len(px.colors.qualitative.Set2)]  # The page's PALETTE.
 
                     if orientation == 'v':
                         if hue_used and cat_var: tx, ty = sub[cat_var], values
@@ -890,6 +904,7 @@ def visualization():
                         else: tx, ty = values, [0] * len(values)
 
                     common = dict(name=trace_name, marker_color=color, legendgroup=trace_name, **point_kwargs)
+                    if grouped: common.update(offsetgroup=trace_name, alignmentgroup="True")  # Means align with these.
                     if tx is not None: common['x'] = tx
                     if ty is not None: common['y'] = ty
                     if orientation == 'h': common['orientation'] = 'h'
@@ -900,58 +915,77 @@ def visualization():
                         fig.add_trace(go.Violin(**common, points=point_mode, box_visible=True, meanline_visible=True, spanmode='manual', span=[values.min(), values.max()]))
 
                 single_var = cat_var is None
+                faceted = bool(facet_col_used or facet_row_used)
+                SINGLE_SLOT = num_var  # Faceted single boxes sit on this one category.
 
-                if band_interval and cat_var and not single_var:
+                def mean_ci_traces(frame, showlegend=True):
+                    """Mean ± CI per category (a line and band) or per group (a marker and error bar)."""
                     from scipy import stats as _stats
-                    cat_order = category_orders.get(cat_var, sorted(plot_data[cat_var].dropna().unique().tolist()))
-                    line_groups = levels(plot_data[hue_used]) if hue_used else [None]
-                    if hue_used and hue_used in category_orders: line_groups = [g for g in category_orders[hue_used] if g in line_groups]
-
-                    for li, lgrp in enumerate(line_groups):
-                        sub_lg = plot_data[plot_data[hue_used] == lgrp] if lgrp is not None else plot_data
-                        means, lo, hi = [], [], []
-
-                        for cat in cat_order:
-                            vals = sub_lg.loc[sub_lg[cat_var] == cat, num_var].dropna()
-                            if len(vals) < 2:
-                                means.append(float('nan')); lo.append(float('nan')); hi.append(float('nan'))
+                    z = _stats.norm.ppf(1 - (1 - ci_level_value) / 2)
+                    traces = []
+                    if cat_var:
+                        cat_order = category_orders.get(cat_var, sorted(plot_data[cat_var].dropna().unique().tolist()))
+                        points = ci_style == CI_STYLES[0]
+                        # Color equal to X: points take each category's color; a line joins all categories
+                        # (per color, each would be a single point with nothing to join).
+                        split = grouped or (hue_is_x and points)
+                        line_groups = levels(plot_data[hue_used]) if split else [None]
+                        if split and hue_used in category_orders: line_groups = [g for g in category_orders[hue_used] if g in line_groups]
+                        for li, lgrp in enumerate(line_groups):
+                            sub_lg = frame[frame[hue_used] == lgrp] if lgrp is not None else frame
+                            cats, means, lo, hi = [], [], [], []
+                            for cat in cat_order:
+                                vals = sub_lg.loc[sub_lg[cat_var] == cat, num_var].dropna()
+                                if len(vals) < 2:  # No CI: left out, so the band stays one shape.
+                                    continue
+                                m, se = vals.mean(), _stats.sem(vals)
+                                cats.append(cat); means.append(m); lo.append(m - z * se); hi.append(m + z * se)
+                            if not cats:
                                 continue
-                            m = vals.mean()
-                            se = _stats.sem(vals)
-                            z = _stats.norm.ppf(1 - (1 - ci_level_value) / 2)
-                            means.append(m); lo.append(m - z * se); hi.append(m + z * se)
-
-                        line_color = "black"
-                        group_label = str(lgrp) if lgrp is not None else num_var
-                        if orientation == 'v': xs_line, ys_line, xs_band, ys_band = cat_order, means, cat_order + cat_order[::-1], hi + lo[::-1]
-                        else: xs_line, ys_line, xs_band, ys_band = means, cat_order, hi + lo[::-1], cat_order + cat_order[::-1]
-
-                        fig.add_trace(go.Scatter(x=xs_band, y=ys_band, fill='toself', fillcolor=line_color, opacity=0.15, line=dict(width=0), hoverinfo='skip', showlegend=False, legendgroup=group_label))
-                        fig.add_trace(go.Scatter(x=xs_line, y=ys_line, mode='lines+markers', line=dict(color=line_color, width=2), marker=dict(size=7, color=line_color), name=f"{group_label} mean", legendgroup=group_label, showlegend=True))
-
-                elif band_interval and single_var:
-                    from scipy import stats as _stats
+                            group_label = str(lgrp) if lgrp is not None else num_var
+                            # With a color: the group's color, shifted onto its boxes (scattermode="group").
+                            color = PALETTE[li % len(PALETTE)] if lgrp is not None else "black"
+                            group = dict(offsetgroup=group_label, alignmentgroup="True") if grouped else {}
+                            if points:
+                                err = [h - m for h, m in zip(hi, means)]
+                                bar = dict(type='data', array=err, color=color, thickness=2, width=6)
+                                marker = dict(size=10, color=color, line=dict(width=1.5, color="white"))
+                                axes = dict(x=cats, y=means, error_y=bar) if orientation == 'v' else dict(x=means, y=cats, error_x=bar)
+                                traces.append(go.Scatter(**axes, mode='markers', marker=marker, name=f"{group_label} mean ± CI",
+                                                         legendgroup=group_label, showlegend=showlegend, **group))
+                                continue
+                            if orientation == 'v': xs_line, ys_line, xs_band, ys_band = cats, means, cats + cats[::-1], hi + lo[::-1]
+                            else: xs_line, ys_line, xs_band, ys_band = means, cats, hi + lo[::-1], cats + cats[::-1]
+                            traces.append(go.Scatter(x=xs_band, y=ys_band, mode='lines', fill='toself', fillcolor=_rgba(color, 0.15) if lgrp is not None else "rgba(0,0,0,0.15)", line=dict(width=0), hoverinfo='skip', showlegend=False, legendgroup=group_label, **group))
+                            traces.append(go.Scatter(x=xs_line, y=ys_line, mode='lines+markers', line=dict(color=color, width=2), marker=dict(size=8, color=color, line=dict(width=1, color="white")), name=f"{group_label} mean", legendgroup=group_label, showlegend=showlegend, **group))
+                        return traces
                     hue_groups = levels(plot_data[hue_used]) if hue_used else [None]
                     if hue_used and hue_used in category_orders: hue_groups = [g for g in category_orders[hue_used] if g in hue_groups]
                     n_groups = len(hue_groups)
-                    
                     for hi_, hgrp in enumerate(hue_groups):
-                        sub_hg = plot_data[plot_data[hue_used] == hgrp] if hgrp is not None else plot_data
+                        sub_hg = frame[frame[hue_used] == hgrp] if hgrp is not None else frame
                         vals = sub_hg[num_var].dropna()
                         if len(vals) < 2: continue
-                        m = vals.mean()
-                        se = _stats.sem(vals)
-                        z = _stats.norm.ppf(1 - (1 - ci_level_value) / 2)
-                        err = z * se
-                        pos = 0 if n_groups == 1 else (hi_ - (n_groups - 1) / 2) * (0.8 / n_groups)
+                        m, err = vals.mean(), z * _stats.sem(vals)
                         label = str(hgrp) if hgrp is not None else num_var
-
+                        marker = dict(size=12, color='crimson', symbol='circle', line=dict(width=2, color='white'))
+                        bar = dict(type='data', array=[err], color='crimson', thickness=3, width=8)
+                        # Faceted (Plotly Express) boxes share one category; offsetgroup lines markers up with them.
+                        pos = SINGLE_SLOT if faceted else (0 if n_groups == 1 else (hi_ - (n_groups - 1) / 2) * (0.8 / n_groups))
+                        group = dict(offsetgroup=label, alignmentgroup="True") if (faceted and hue_used) else {}
                         if orientation == 'v':
-                            fig.add_trace(go.Scatter(x=[pos], y=[m], mode='markers', marker=dict(size=12, color='crimson', symbol='circle', line=dict(width=2, color='white')), error_y=dict(type='data', array=[err], color='crimson', thickness=3, width=8), name=f"{label} mean", legendgroup=label, showlegend=True))
+                            traces.append(go.Scatter(x=[pos], y=[m], mode='markers', marker=marker, error_y=bar, name=f"{label} mean", legendgroup=label, showlegend=showlegend, **group))
                         else:
-                            fig.add_trace(go.Scatter(x=[m], y=[pos], mode='markers', marker=dict(size=12, color='crimson', symbol='circle', line=dict(width=2, color='white')), error_x=dict(type='data', array=[err], color='crimson', thickness=3, width=8), name=f"{label} mean", legendgroup=label, showlegend=True))
+                            traces.append(go.Scatter(x=[m], y=[pos], mode='markers', marker=marker, error_x=bar, name=f"{label} mean", legendgroup=label, showlegend=showlegend, **group))
+                    return traces
 
-                fig.update_layout(width=400 if (single_var and orientation == 'v') else 800, height=300 if (single_var and orientation == 'h') else 600, boxmode='group' if hue_used else 'overlay', violinmode='group' if hue_used else 'overlay')
+                if band_interval and not faceted:
+                    for trace in mean_ci_traces(plot_data):
+                        fig.add_trace(trace)
+
+                if band_interval and grouped and (faceted or cat_var):
+                    fig.update_layout(scattermode='group', scattergap=GROUP_GAP, boxgap=GROUP_GAP, violingap=GROUP_GAP)
+                fig.update_layout(width=400 if (single_var and orientation == 'v') else 800, height=300 if (single_var and orientation == 'h') else 600, boxmode='group' if grouped else 'overlay', violinmode='group' if grouped else 'overlay')
                 if single_var:
                     if orientation == 'v': fig.update_xaxes(showticklabels=False, title_text="", range=[-0.5, 0.5])
                     else: fig.update_yaxes(showticklabels=False, title_text="", range=[-0.5, 0.5])
@@ -962,18 +996,43 @@ def visualization():
                     if orientation == 'v': fig.update_xaxes(**axis)
                     else: fig.update_yaxes(**axis)
 
-                if facet_col_used or facet_row_used:
-                    plot_kwargs = dict(data_frame=plot_data, color_discrete_sequence=PALETTE, width=800, height=600, category_orders=category_orders)
-                    if var_y_used: plot_kwargs['y'] = var_y_used
-                    if var_x_used: plot_kwargs['x'] = var_x_used
+                if faceted:
+                    facet_data = plot_data.copy()
+                    # Facet panels in a fixed order, so the overlays find their panel (see facet_panels).
+                    facet_orders = dict(category_orders)
+                    for facet in (facet_col_used, facet_row_used):
+                        if facet and facet not in facet_orders:
+                            facet_orders[facet] = facet_levels(facet_data, facet)
+                    if single_var:  # One category per panel, so markers can line up with the boxes.
+                        slot = "__edalens_slot__"
+                        facet_data[slot] = SINGLE_SLOT
+                    num_axis, cat_axis = ('y', 'x') if orientation == 'v' else ('x', 'y')
+                    plot_kwargs = dict(data_frame=facet_data, color_discrete_sequence=PALETTE, width=800, height=600,
+                                       category_orders=facet_orders, labels={slot: ""} if single_var else None)
+                    plot_kwargs[num_axis] = num_var
+                    plot_kwargs[cat_axis] = slot if single_var else cat_var
                     if hue_used: plot_kwargs['color'] = hue_used
                     if facet_col_used: plot_kwargs['facet_col'] = facet_col_used
                     if facet_row_used: plot_kwargs['facet_row'] = facet_row_used
-                    fig = px.box(**plot_kwargs) if tplot == "boxplot" else px.violin(**plot_kwargs, box=True)
+                    points = 'all' if swarm_points else False
+                    fig = px.box(**plot_kwargs, points=points) if tplot == "boxplot" else px.violin(**plot_kwargs, box=True, points=points)
+                    if swarm_points:
+                        fig.update_traces(**point_kwargs)
+                    if not grouped:
+                        # Plotly Express groups the panels' single boxes (or one color per category)
+                        # into slots, which squeezes each box off its category; overlay keeps them centred.
+                        fig.update_layout(boxmode='overlay', violinmode='overlay')
                     if tplot == "violin":
                         for trace in fig.data:
                             ys = trace.y if orientation == 'v' else trace.x
                             if ys is not None and len(ys) > 0: trace.update(spanmode='manual', span=[min(ys), max(ys)])
+                    if band_interval:
+                        _, _, panels = facet_panels(facet_data, facet_col_used, facet_row_used, facet_orders, bottom_up=True)
+                        for i, (row, col, subset, _) in enumerate(panels):
+                            for trace in mean_ci_traces(subset, showlegend=i == 0):
+                                fig.add_trace(trace, row=row, col=col)
+                        if grouped:
+                            fig.update_layout(scattermode='group', scattergap=GROUP_GAP, boxgap=GROUP_GAP, violingap=GROUP_GAP)
 
                 notes = [n for n, on in (("# EDALens also marks each group's mean ± CI.", band_interval),
                                          ("# EDALens also overlays a swarm of the points.", swarm_points)) if on]
@@ -1310,6 +1369,7 @@ def visualization():
                             help="On: all colors in a panel are normalized together, so each curve's area is its "
                                  "share of the panel. Off: each curve has area 1. Needs a Color.") and hue_var != 'None'
                         cumulative = st.checkbox("Cumulative Density", value=False)
+                        rug = st.checkbox("Add Rug Plot?", value=False, help="A tick under the curves for each value.")
                         show_scatter = False
                         kde_style = "Filled"
                         gradient_alpha = False
@@ -1384,6 +1444,7 @@ def visualization():
                     else:
                         facet_groups = [((), plot_data)]
 
+                    rugs = []  # (row, col, values, color, name): drawn under the curves once their height is known.
                     for idx, (facet_vals, group_df) in enumerate(facet_groups):
                         if facet_active and facets:
                             if group_df.empty: continue
@@ -1399,6 +1460,9 @@ def visualization():
                         for j, hue_val in enumerate(hue_values):
                             subset = group_df[group_df[hue_var] == hue_val] if hue_var != 'None' else group_df
                             x_data = subset[var_x].dropna()
+                            if rug and len(x_data):
+                                rugs.append((row_idx, col_idx, x_data, PALETTE[j % len(PALETTE)],
+                                             f"{hue_val}" if hue_var != 'None' else str(var_x)))
                             if len(x_data) < 2: continue
                             try:
                                 kde = gaussian_kde(x_data)
@@ -1417,6 +1481,10 @@ def visualization():
                                 if multiple == "stack": offset += y_values.max()
                             except Exception: continue
 
+                    if rugs:
+                        top = max((max(t.y) for t in fig.data if t.y is not None and len(t.y)), default=1.0)
+                        for row_i, col_i, values, color, name in rugs:
+                            fig.add_trace(rug_trace(values, "x", -0.05 * top, color, name), row=row_i, col=col_i)
                     fig.update_layout(title=f"Density Plot of {var_x}", width=900, height=300 * max(n_rows, 1), showlegend=True)
                     plotly_chart(fig)
 
@@ -1426,12 +1494,12 @@ def visualization():
                             plot_data, x=var_x, y=var_y, facet_col=facet_col if facet_col != 'None' else None, facet_row=facet_row if facet_row != 'None' else None,
                             # A list, not 'Viridis': px builds the rug's colour from the scale and fails on the name.
                             color_continuous_scale=px.colors.sequential.Viridis, histnorm=None if show_counts else 'probability density',
-                            marginal_x='rug' if rug else None, marginal_y='rug' if rug else None, width=800, height=600, category_orders=category_orders
+                            width=800, height=600, category_orders=category_orders
                         )
                     else:
                         fig = px.density_contour(
                             plot_data, x=var_x, y=var_y, color=hue_var if hue_var != 'None' else None, facet_col=facet_col if facet_col != 'None' else None, facet_row=facet_row if facet_row != 'None' else None,
-                            color_discrete_sequence=PALETTE, marginal_x='rug' if rug else None, marginal_y='rug' if rug else None, width=800, height=600, category_orders=category_orders
+                            color_discrete_sequence=PALETTE, width=800, height=600, category_orders=category_orders
                         )
                         
                         # Clean up layout: hide useless colorbar and update contour fills
@@ -1483,6 +1551,9 @@ def visualization():
                                         )
                                     fig.add_trace(trace)
 
+                    if rug:
+                        add_panel_rugs(fig, plot_data, var_x, var_y, None if kind == "hist" else hue_var,
+                                       facet_col, facet_row, category_orders)
                     plotly_chart(fig)
 
 
@@ -1504,6 +1575,8 @@ def visualization():
                     size_max = st.slider("Max Marker Size", 5, 100, 10, 5)
                     enhance_size = st.selectbox("Enhance Size Differences", options=["None", "Min-Max Normalize"], index=0)
 
+                    scatter_rug = st.checkbox("Add Rug Plot?", value=False, key="scatter_rug",
+                                              help="Ticks along X and Y for each point, in every facet panel.")
                     plot_3d = st.checkbox("3D Scatter", value=False, help="Add a Z variable and rotate the plot with the mouse.")
                     var_z, show_projections = None, False
                     if plot_3d:
@@ -1572,6 +1645,8 @@ def visualization():
                     fig.update_layout(scene=dict(xaxis_title=var_x, yaxis_title=var_y, zaxis_title=var_z), margin=dict(l=0, r=0, t=40, b=0))
                 else:
                     fig = px.scatter(**scatter_kwargs)
+                    if scatter_rug:
+                        add_panel_rugs(fig, plot_data, var_x, var_y, hue, facet_col, facet_row, category_orders)
                 shown = {k: v for k, v in scatter_kwargs.items() if k not in ("data_frame", "width", "height")}
                 note = None
                 if not isinstance(shown.get("size"), str):  # No Size column: equal markers.
@@ -1671,6 +1746,10 @@ def visualization():
                 var_x = global_var_x
                 var_y = global_var_y
                 hue = global_hue if global_hue else 'None'
+                reg_facet_col, reg_facet_row = global_facet_col, global_facet_row
+                reg_faceted = bool(reg_facet_col or reg_facet_row)
+                reg_data = data.copy()
+                reg_orders = {}
 
                 with st.sidebar.expander("⚙️ Plot Configuration", expanded=False):
                     methods = st.multiselect("Fit Methods", list(FIT_METHODS), default=["Polynomial"],
@@ -1682,27 +1761,49 @@ def visualization():
                     if "LOWESS" in methods:
                         lowess_frac = st.slider("LOWESS Fraction (smoothing span)", 0.05, 1.0, 0.66, 0.01,
                                                 help="Share of points used for each local fit; larger is smoother.")
-                    marginal_options = ["None", *MARGINAL_KINDS]
-                    marginal_x = st.selectbox("Marginal Plot for X", marginal_options, index=0)
-                    marginal_y = st.selectbox("Marginal Plot for Y", ["Same as X", *marginal_options], index=0,
-                                              help="Defaults to the X choice so both axes get a marginal; pick another kind or None to change it.")
-                    if marginal_y == "Same as X":
-                        marginal_y = marginal_x
+                    reg_rug = False
+                    if reg_faceted:  # Marginal subplots cannot sit beside facet panels; a rug can go in each.
+                        marginal_x = marginal_y = "None"
+                        reg_rug = st.checkbox("Add Rug Plot?", value=False, key="regression_rug")
+                    else:
+                        marginal_options = ["None", *MARGINAL_KINDS]
+                        marginal_x = st.selectbox("Marginal Plot for X", marginal_options, index=0)
+                        marginal_y = st.selectbox("Marginal Plot for Y", ["Same as X", *marginal_options], index=0,
+                                                  help="Defaults to the X choice so both axes get a marginal; pick another kind or None to change it.")
+                        if marginal_y == "Same as X":
+                            marginal_y = marginal_x
                     use_hue = st.checkbox("Use Hue for Fits?", value=True)
+                    for var_name, label in ((hue, "Hue"), (reg_facet_col, "Facet Column"), (reg_facet_row, "Facet Row")):
+                        if var_name and var_name != 'None' and is_text_like(reg_data[var_name]):
+                            reg_order = order_select(f"Custom Order for {label} ({var_name})", var_name, reg_data[var_name])
+                            reg_data[var_name] = ordered_categories(reg_data[var_name], reg_order)
+                            reg_orders[var_name] = reg_order
+                    for var_name in reg_orders:  # Values left out of a custom order are left out.
+                        reg_data = reg_data[reg_data[var_name].notna()]
 
+                fit_hue = hue if use_hue and hue != 'None' else None
                 try:
-                    fig = regression_figure(
-                        data, var_x, var_y,
-                        hue=hue if use_hue and hue != 'None' else None,
-                        methods=methods, order=order, ci_level=ci_level, lowess_frac=lowess_frac,
-                        marginal_x=None if marginal_x == "None" else marginal_x,
-                        marginal_y=None if marginal_y == "None" else marginal_y,
-                        palette=PALETTE,
-                    )
+                    if reg_faceted:
+                        fig, reg_table = facet_regression(
+                            reg_data, var_x, var_y, hue=fit_hue, facet_col=reg_facet_col, facet_row=reg_facet_row,
+                            methods=methods, order=order, ci_level=ci_level, lowess_frac=lowess_frac,
+                            palette=PALETTE, category_orders=reg_orders, rug=reg_rug,
+                        )
+                    else:
+                        fig = regression_figure(
+                            reg_data, var_x, var_y, hue=fit_hue,
+                            methods=methods, order=order, ci_level=ci_level, lowess_frac=lowess_frac,
+                            marginal_x=None if marginal_x == "None" else marginal_x,
+                            marginal_y=None if marginal_y == "None" else marginal_y,
+                            palette=PALETTE,
+                        )
+                        _, reg_table = facet_regression(reg_data, var_x, var_y, hue=fit_hue, methods=["Polynomial"],
+                                                        order=order, category_orders=reg_orders)
                 except ValueError as exc:
                     st.warning(str(exc))
                     return
                 plotly_chart(fig)
+                regression_table(reg_table, var_x, var_y, order)
 
             elif plot_type in ('candlestick', 'waterfall'):
                 var_x = global_var_x
@@ -1829,6 +1930,53 @@ def visualization():
         )
     else:
         st.warning("The dataset is empty after preprocessing. Please check your data or selections in the Home section.")
+
+def regression_table(table, x, y, order):
+    """The OLS results of each panel and color under a regression plot."""
+    from edalens.utils.ui import report
+
+    if table.empty:
+        return
+    model = f"{y} = a + b·{x}" if order == 1 else f"{y} = polynomial of order {order} in {x}"
+    st.markdown(f"**Regression for each panel** ({model}, ordinary least squares)")
+    formats = {c: st.column_config.NumberColumn(format="%.4g") for c in table.columns
+               if pd.api.types.is_float_dtype(table[c])}
+    st.dataframe(table, hide_index=True, column_config=formats)
+    p_label = "the slope's" if order == 1 else "the model's F-test"
+    st.caption(f"p-value: {p_label}; below 0.05, the relation is unlikely to be chance alone. "
+               "R²: share of the variation in Y the fit explains.")
+    if st.button("➕ Add table to report", key="regression_table_report", type="tertiary"):
+        report().add_table(table, f"Regression of {y} on {x}", model)
+        st.toast("Added the regression table to the report.", icon="➕")
+
+
+def add_panel_rugs(fig, data, x, y, hue, facet_col, facet_row, category_orders):
+    """Rug ticks for X and Y (per color) in each facet panel of a Plotly Express figure.
+
+    Plotly Express's own rugs are marginal subplots, which cannot be combined
+    with facets; these are ticks just outside the data, inside each panel.
+    """
+    hue = None if hue in (None, 'None') else hue
+    facet_col = None if facet_col in (None, 'None') else facet_col
+    facet_row = None if facet_row in (None, 'None') else facet_row
+    data = data.dropna(subset=[x, y])
+    orders = dict(category_orders)
+    for facet in (facet_col, facet_row):
+        if facet and facet not in orders:  # Plotly Express's order: first appearance.
+            orders[facet] = facet_levels(data, facet)
+    groups = facet_levels(data, hue, orders) if hue else [None]
+    x_at, y_at = rug_position(data[y]), rug_position(data[x])
+    _, _, panels = facet_panels(data, facet_col, facet_row, orders, bottom_up=True)
+    for row, col, subset, _ in panels:
+        for i, group in enumerate(groups):
+            part = subset[subset[hue] == group] if hue else subset
+            if part.empty:
+                continue
+            color = px.colors.qualitative.Set2[i % len(px.colors.qualitative.Set2)]  # The page's PALETTE.
+            name = str(group) if hue else str(y)
+            for trace in (rug_trace(part[x], "x", x_at, color, name), rug_trace(part[y], "y", y_at, color, name)):
+                fig.add_trace(trace, row=row, col=col)
+
 
 def jittered_values(series, jitter_amount=0.3):
     if pd.api.types.is_numeric_dtype(series):

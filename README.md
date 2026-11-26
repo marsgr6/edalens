@@ -19,7 +19,8 @@ import edalens
 
 edalens.walk(df)                    # the app inside your notebook, df preloaded
 edalens.walk(df, mode="browser")    # same, with no server at all (Colab, JupyterHub)
-edalens.show()                      # the app in its own browser tab
+edalens.show(df)                    # the app in its own browser tab, df preloaded
+edalens.show(df, mode="browser")    # same tab, with Python running in the browser
 ```
 
 > **Status:** under active development. Some combinations (heavy faceting, very
@@ -36,7 +37,7 @@ edalens.show()                      # the app in its own browser tab
 | **Missing Data Imputation** | Per-column missing counts/percentages · drop rows with any NaN or mostly-empty columns · impute chosen columns: KNN (choose k), mean, median, zero or interpolation for numbers; most frequent value or a "Missing" label for text |
 | **Statistics** | Summary table (type, missing, unique, mean/median/SD, skew, outliers) and duplicate rows · group comparisons (t-test/ANOVA or Mann-Whitney/Kruskal-Wallis with effect sizes; chi-square with Cramér's V) · Pearson/Spearman/Kendall correlations with p-values and top pairs · outlier view (IQR or z-score) with an option to exclude the rows |
 | **Visualization** | 17 plot types: bars (counts with Y = None, or a numeric Y summed/averaged per category or per week/month/year of a date X, as values or percentages), boxes (box/violin), lineplot (mean/median/sum per X step or raw values, date X on a time axis, CI band), histogram, density 1 (1-D KDE), density 2 (2-D hist/KDE), scatter (2-D or 3-D), catplot (strip/swarm), missingno-style plots, correlation, clustermap, pairplot, regression (poly order 1–3 + CI and/or LOWESS, marginal rug/histogram/box/violin), heatmap (numeric columns with scaling/sorting/clustering), ridges, candlestick (OHLC per step, optional hidden weekend gaps), waterfall. Every chart downloads as PDF; the main ones show **Python code** that recreates them. Large data is sampled for point-heavy plots. Shared X / Y / Color / Facet-col / Facet-row / Size mapping, custom category order, high-cardinality warnings |
-| **Time Series** | Own data loader (date column + day-first/month-first) · resampling (hourly → yearly, mean/sum) and rolling smoothing · multi-variable mode · decomposition (statsmodels or Prophet) + ACF/PACF · Isolation-Forest anomaly detection · temporal profiles · calendar heatmaps · profile heatmaps · forecasting (Prophet, ETS, SARIMA) with residual anomalies · Prophet changepoint analysis · linear/polynomial trend |
+| **Time Series** | Uses the Load data dataset (date column and day/month order detected) or its own upload · resampling (hourly → yearly, mean/sum) and rolling smoothing · multi-variable mode · decomposition (statsmodels or Prophet) + ACF/PACF · Isolation-Forest anomaly detection · temporal profiles · calendar heatmaps · profile heatmaps · forecasting (Prophet, ETS, SARIMA) with residual anomalies · Prophet changepoint analysis · linear/polynomial trend |
 | **Report** | Charts and tables saved with ➕ Add to report, plus text blocks: rename, annotate and reorder them, then export a static HTML dashboard (with contents) or a PDF, publish it as a link served by the app, or send it to Python (`app.report()`) |
 | **💾 Session** (sidebar) | Save the data, all steps, plot settings, category orders and report to one file; open it later to continue |
 | **About** | Built-in user manual with screenshots and example datasets |
@@ -84,7 +85,21 @@ blocks until you press Ctrl+C:
 edalens                      # first free port from 8501
 edalens --port 8600          # fail instead of switching if 8600 is taken
 edalens --no-browser         # only print the URL
+edalens --data sales.csv     # preload a CSV (a path or a URL)
+edalens --browser            # browser mode, in its own tab (see below)
 python -m edalens --help     # same launcher without the console script
+```
+
+`--browser` serves the in-browser app (the same page as `walk(df, mode="browser")`)
+on 127.0.0.1 and opens it in a tab. Python runs inside the tab with stlite, so
+no Streamlit process is started; the first start downloads Python packages
+(20–60 s, then cached by the browser), and Prophet sections use a numpy version
+of Prophet's model. It is a quick way to check what browser mode, Colab's
+`mode="browser"` or a saved page will do. It is the same as these two steps:
+
+```bash
+python -c "import edalens; edalens.walk(None, mode='browser', display=False).save('edalens.html')"
+python -m http.server 8611   # then open http://localhost:8611/edalens.html
 ```
 
 **Python / Jupyter** — `show()` returns once the server answers its health
@@ -96,6 +111,9 @@ import edalens
 app = edalens.show()              # open_browser=False to only get the URL
 app.url                          # e.g. http://127.0.0.1:8501/edalens-3f9c.../
 app.stop()                       # stops only this server; safe to call twice
+
+app = edalens.show(df)                    # df preloaded on the Load data page
+app = edalens.show(df, mode="browser")    # browser mode in its own tab; .stop() too
 
 with edalens.show(open_browser=False) as app:   # stopped when the block ends
     print(app.url)

@@ -1,5 +1,6 @@
 """Time Series page: pandas-version-safe frequencies and the in-browser menu."""
 
+import io
 import json
 import sys
 
@@ -288,3 +289,75 @@ def test_prophet_sections_run_with_the_browser_version(monkeypatch, section):
     assert not app.warning, [w.value for w in app.warning]
     assert any(prophet_lite.LABEL in c.value for c in app.caption)
     assert app.get("plotly_chart")
+
+
+def test_date_columns_and_day_month_order():
+    from edalens.utils.data_processing import date_columns, guess_dayfirst
+
+    frame = pd.DataFrame(
+        {
+            "when": ["31/01/2024", "01/02/2024", "15/02/2024"],
+            "year": [2020, 2021, 2022],  # Numbers are not dates.
+            "label": ["a", "b", "c"],
+            "stamp": pd.date_range("2024-01-01", periods=3),
+        }
+    )
+    assert date_columns(frame) == ["stamp", "when"]
+    assert guess_dayfirst(frame["when"])  # 31/01 only reads day first.
+    # Both orders read every value; only month first gives a regular (monthly) series.
+    monthly = pd.Series(
+        pd.date_range("2020-01-01", periods=24, freq="MS").strftime("%m/%d/%Y")
+    )
+    assert not guess_dayfirst(monthly)
+
+
+def loaded_app(data: pd.DataFrame) -> AppTest:
+    app = AppTest.from_function(time_series_page, default_timeout=60)
+    app.session_state["filtered_df"] = data
+    app.session_state["data_loaded"] = True
+    app.session_state["data_version"] = 1
+    return app
+
+
+def monthly_frame() -> pd.DataFrame:
+    return pd.read_csv(io.BytesIO(monthly_csv()))
+
+
+def test_load_data_dataset_is_the_default_source(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "emscripten")
+    app = loaded_app(monthly_frame())
+    app.run()
+    assert not app.exception
+    source = next(r for r in app.radio if r.label == "Select data source")
+    assert source.value == time_series.LOADED_SOURCE
+    assert (
+        next(s for s in app.selectbox if s.label == "Select the date column").value
+        == "FECHA"
+    )
+    assert len(app.session_state["df"]) == 96
+    assert isinstance(app.session_state["df"].index, pd.DatetimeIndex)
+
+
+def test_other_sections_use_the_load_data_dataset_and_follow_its_changes(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "emscripten")
+    app = loaded_app(monthly_frame())
+    app.run()
+    app.sidebar.radio[0].set_value("Time Series Visualization")
+    app.run()
+    assert not app.exception and len(app.session_state["df"]) == 96
+    # A cleaning step on the Load data page (a new data_version) reaches this page.
+    app.session_state["filtered_df"] = monthly_frame().head(50)
+    app.session_state["data_version"] = 2
+    app.run()
+    assert not app.exception and len(app.session_state["df"]) == 50
+
+
+def test_a_dataset_without_dates_gets_a_message(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "emscripten")
+    app = loaded_app(pd.DataFrame({"tip": [1.0, 2.5], "day": ["Sun", "Sat"]}))
+    app.run()
+    assert not app.exception and "df" not in app.session_state
+    assert any("no date column" in w.value for w in app.warning)
+    app.sidebar.radio[0].set_value("Forecasting")
+    app.run()
+    assert any("no date column" in i.value for i in app.info)

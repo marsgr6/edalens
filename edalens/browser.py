@@ -148,7 +148,7 @@ class BrowserApp:
             'allow="clipboard-write"></iframe>'
             '<div style="font-size: 0.85em;">EDALens runs in your browser (stlite); '
             "the first start downloads Python packages and takes 20-60 s. "
-            "Forecasting with Prophet is not available in this mode.</div>"
+            "Prophet sections use a numpy version of Prophet's model.</div>"
         )
 
     def display(self, height: Optional[int] = None) -> None:
@@ -190,6 +190,96 @@ def walk_browser(
             f"Warning: the embedded data makes this output {len(app.page) / 1e6:.0f} MB; "
             "consider a sample (df.sample(...)) or mode='server'."
         )
-    if display:
+    if display and _in_notebook():
         app.display()
+    elif display:
+        print("Not in a notebook, so nothing is shown: use .save('page.html'), or edalens.show(df, mode='browser').")
     return app
+
+
+def _in_notebook() -> bool:
+    from edalens.notebook import _in_notebook as in_notebook
+
+    return in_notebook()
+
+
+PAGE_NAME = "index.html"
+
+
+class BrowserPageServer:
+    """A browser-mode page served on 127.0.0.1, like ``python -m http.server``.
+
+    The page only needs a web address: Python runs in the browser tab (stlite),
+    so this server just hands out one HTML file. ``edalens.show(df, mode="browser")``
+    and ``edalens --browser`` start it.
+    """
+
+    def __init__(self, df: Optional[pd.DataFrame], port: int) -> None:
+        import tempfile
+
+        self.port = port
+        self._folder = tempfile.TemporaryDirectory(prefix="edalens-page-")
+        self.path = Path(self._folder.name) / PAGE_NAME
+        BrowserApp(df).save(self.path)
+        self.url = f"http://127.0.0.1:{port}/{PAGE_NAME}"
+        self._server = None
+        self._thread = None
+
+    def start(self) -> "BrowserPageServer":
+        import functools
+        import threading
+        from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+        class Quiet(SimpleHTTPRequestHandler):
+            def log_message(self, *args) -> None:  # No request log in the terminal.
+                pass
+
+        handler = functools.partial(Quiet, directory=self._folder.name)
+        try:
+            self._server = ThreadingHTTPServer(("127.0.0.1", self.port), handler)
+        except OSError as exc:
+            from edalens.launcher import LaunchError
+
+            self._folder.cleanup()
+            raise LaunchError(f"Port {self.port} is not available: {exc}") from exc
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def wait(self) -> int:
+        """Block until stopped (Ctrl+C in the terminal)."""
+        import time
+
+        while self.running:
+            time.sleep(0.5)
+        return 0
+
+    def stop(self) -> None:
+        """Stop serving and delete the page; safe to call repeatedly."""
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+        self._folder.cleanup()
+
+    def __enter__(self) -> "BrowserPageServer":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.stop()
+
+    def __repr__(self) -> str:
+        state = "running" if self.running else "stopped"
+        return f"<EDALens browser-mode page {self.url} ({state})>"
+
+    def _repr_html_(self) -> str:
+        state = "running" if self.running else "stopped"
+        return f'EDALens browser-mode page <a href="{self.url}" target="_blank">{self.url}</a> ({state})'
+
+
+def serve_browser(df: Optional[pd.DataFrame], port: int) -> BrowserPageServer:
+    return BrowserPageServer(df, port).start()

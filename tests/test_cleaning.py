@@ -433,3 +433,30 @@ def test_recode_in_the_browser_without_data_editor(monkeypatch):
         "Other",
         "Mon",
     ]
+
+
+def test_enter_in_the_github_field_loads_the_csv(monkeypatch):
+    import requests
+
+    class Response:
+        content = b"a,b\n1,x\n2,y\n"
+
+        def raise_for_status(self):
+            pass
+
+    calls = []
+    monkeypatch.setattr(
+        requests, "get", lambda url, *a, **k: calls.append(url) or Response()
+    )
+    app = AppTest.from_function(home_page, default_timeout=30)
+    app.run()
+    # Typing a link and pressing Enter changes the field; no button click.
+    app.text_input(key="github_link").set_value(
+        "https://github.com/o/r/blob/main/d.csv"
+    )
+    app.run()
+    assert not app.exception
+    assert calls == ["https://raw.githubusercontent.com/o/r/main/d.csv"]
+    assert list(app.session_state["filtered_df"].columns) == ["a", "b"]
+    app.run()  # A later rerun does not download it again.
+    assert len(calls) == 1

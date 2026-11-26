@@ -122,8 +122,10 @@ def test_density_2_rug_is_on_both_axes(kind):
     next(c for c in app.checkbox if c.label == "Add Rug Plot?").check()
     app.run()
     assert not app.exception
-    rugs = [t for t in chart(app)["data"] if t["type"] == "box"]
-    assert {"x" if "x" in t else "y" for t in rugs} == {"x", "y"}
+    rugs = [t for t in chart(app)["data"] if t.get("name", "").endswith(" rug")]
+    # One tick row along X (constant y) and one along Y (constant x).
+    symbols = {t["marker"]["symbol"] for t in rugs}
+    assert symbols == {"line-ns-open", "line-ew-open"}
 
 
 def zone(app: AppTest, label: str):
@@ -164,7 +166,7 @@ def test_changing_the_plot_moves_x_and_y_to_valid_columns():
 
 
 def test_plots_without_facets_say_so():
-    app = viz_app(tips(), "regression", x="tip", y="bill", facet_row="sex")
+    app = viz_app(tips(), "pairplot", facet_row="sex")
     app.run()
     assert any("does not use Facet" in i.value for i in app.info)
 

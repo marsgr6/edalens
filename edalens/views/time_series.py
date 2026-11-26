@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import requests
 import io
 from edalens.utils import forecasting
-from edalens.utils.data_processing import parse_dates
+from edalens.utils.data_processing import date_columns, guess_dayfirst, parse_dates
 from edalens.utils.ui import plotly_chart, pyplot, sidebar_menu, start_charts
 
 
@@ -91,6 +91,81 @@ def _forecasting(df, variables, method, time_granularity, aggregation_method, re
             st.caption(f"{len(series)} observations · {season_note}{anomaly_note}")
 
 
+LOADED_SOURCE = "Data from the Load data page"
+DAY_FIRST, MONTH_FIRST = "DD/MM/YYYY (Day First)", "MM/DD/YYYY (Month First)"
+ORIGIN_KEY = "ts_origin"  # Where st.session_state["df"] came from, to refresh it when that data changes.
+_NO_DATES = {
+    True: "📅 The dataset on the Load data page has no date column, so it is not a time series. "
+          "If a column holds dates that were not recognised, parse it on the Load data page "
+          "(Data Cleaning → 📆 Parse a column as dates), or load a time-series CSV here.",
+    False: "📅 This file has no column whose values read as dates, so it cannot be used as a time series.",
+}
+
+
+def _loaded_frame():
+    """The Load data page's dataset, with a date row index turned back into a column."""
+    df = st.session_state.get("filtered_df")
+    if df is None or not st.session_state.get("data_loaded", True):
+        return None
+    if isinstance(df.index, pd.DatetimeIndex):
+        return df.rename_axis(df.index.name or "date").reset_index()
+    return df.reset_index(drop=True)
+
+
+def _origin(source_type):
+    if source_type == LOADED_SOURCE:
+        return ("loaded", st.session_state.get("data_version", 0))
+    return ("file",)
+
+
+def _prepare(df, date_col, dayfirst, show=True):
+    """Parse the dates, drop the rows without one and index the data by date."""
+    df = df.copy()
+    raw_dates = df[date_col]
+    df[date_col] = parse_dates(raw_dates, dayfirst)
+    invalid = int(df[date_col].isna().sum())
+    if invalid and show:
+        st.warning(f"⚠️ {invalid} rows could not be parsed as dates and will be removed.")
+        if parse_dates(raw_dates, not dayfirst).isna().sum() < invalid:
+            other = MONTH_FIRST if dayfirst else DAY_FIRST
+            st.info(f"ℹ️ More dates parse with **{other}**; the dates may be in that order.")
+    df = df.dropna(subset=[date_col])
+    if df.empty:
+        if show:
+            st.error("❌ No valid dates remain after parsing.")
+        return None
+    df = df.sort_values(by=date_col).set_index(date_col)
+    repeated = int(df.index.duplicated().sum())
+    if repeated and show:
+        st.info(f"ℹ️ {repeated} rows share a date with another row (several series or records per date). "
+                "Choose a summarization frequency in the sidebar to combine them, or filter one series "
+                "on the Load data page.")
+    return df
+
+
+def _use_loaded_data():
+    """Start from the Load data page's dataset when it has dates, and follow its changes."""
+    origin = st.session_state.get(ORIGIN_KEY)
+    if origin is not None and origin[0] == "file":
+        return  # A file loaded on this page stays until another one is loaded.
+    loaded = _loaded_frame()
+    version = st.session_state.get("data_version", 0)
+    if loaded is None or origin == ("loaded", version):
+        return
+    st.session_state.pop("df", None)
+    candidates = date_columns(loaded)
+    if not candidates:
+        st.session_state[ORIGIN_KEY] = ("loaded", version)
+        st.info(_NO_DATES[True])
+        return
+    column = candidates[0]
+    series = _prepare(loaded, column, guess_dayfirst(loaded[column]), show=False)
+    st.session_state[ORIGIN_KEY] = ("loaded", version)
+    if series is not None:
+        st.session_state["df"] = series
+        st.toast(f"Using the Load data dataset, with {column} as dates.", icon="📅")
+
+
 def time_series_analysis():
     start_charts()
     #st.subheader("📈 Time Series Analysis & Anomaly Detection")
@@ -118,9 +193,16 @@ def time_series_analysis():
         na_values = ['', 'NA', 'N/A', 'na', 'n/a', 'NaN', 'nan', 'NULL', 'null', 'missing', '-', '--']
         df = None
 
-        source_type = st.radio("Select data source", ["Upload CSV", "GitHub Link"])
+        loaded = _loaded_frame()
+        sources = ([LOADED_SOURCE] if loaded is not None else []) + ["Upload CSV", "GitHub Link"]
+        source_type = st.radio("Select data source", sources, key="ts_source_type",
+                               help="The Load data page's dataset includes its cleaning steps (filters, "
+                                    "parsed dates, recoding...).")
 
-        if source_type == "Upload CSV":
+        if source_type == LOADED_SOURCE:
+            df = loaded
+            st.caption(f"{len(df)} rows × {df.shape[1]} columns from the Load data page.")
+        elif source_type == "Upload CSV":
             uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
             if uploaded_file:
                 try:
@@ -150,37 +232,36 @@ def time_series_analysis():
                     st.stop()
 
         if df is not None:
-            date_col = st.selectbox("Select the date column", df.columns, index=0)
-            date_format = st.radio(
-                "Select date format",
-                options=["DD/MM/YYYY (Day First)", "MM/DD/YYYY (Month First)"],
-                index=0
-            )
-            dayfirst = date_format == "DD/MM/YYYY (Day First)"
-
-            try:
-                raw_dates = df[date_col]
-                df[date_col] = parse_dates(raw_dates, dayfirst)
-                invalid_dates = df[date_col].isna().sum()
-                if invalid_dates > 0:
-                    st.warning(f"⚠️ {invalid_dates} rows could not be parsed as dates and will be removed.")
-                    if parse_dates(raw_dates, not dayfirst).isna().sum() < invalid_dates:
-                        other = "MM/DD/YYYY (Month First)" if dayfirst else "DD/MM/YYYY (Day First)"
-                        st.info(f"ℹ️ More dates parse with **{other}**; the dates may be in that order.")
-                df = df.dropna(subset=[date_col])
-                if df.empty:
-                    st.error("❌ No valid dates remain after parsing.")
-                    st.stop()
-                df = df.sort_values(by=date_col).set_index(date_col)
-                st.session_state['df'] = df
-                st.success(f"✅ Data loaded successfully! {len(df)} rows processed.")
-                st.write("**Preview of Loaded Data (First 5 Rows):**")
-                st.write(df.head())
-            except Exception as e:
-                st.error(f"❌ Error parsing dates: {e}")
+            candidates = date_columns(df)
+            if not candidates:
+                st.warning(_NO_DATES[source_type == LOADED_SOURCE])
                 st.stop()
+            date_col = st.selectbox("Select the date column", candidates, key=f"ts_date_col_{source_type}",
+                                    help="Only columns whose values read as dates are listed.")
+            if pd.api.types.is_datetime64_any_dtype(df[date_col]):
+                dayfirst = True  # Already dates: the order does not matter.
+            else:
+                detected = guess_dayfirst(df[date_col])
+                date_format = st.radio(
+                    "Select date format",
+                    options=[DAY_FIRST, MONTH_FIRST],
+                    index=0 if detected else 1,
+                    key=f"ts_date_format_{source_type}_{date_col}",
+                    help="Preselected from the data: the order that reads the most dates and, "
+                         "when both do, gives evenly spaced dates.",
+                )
+                dayfirst = date_format == DAY_FIRST
+            series = _prepare(df, date_col, dayfirst)
+            if series is None:
+                st.stop()
+            st.session_state['df'] = series
+            st.session_state[ORIGIN_KEY] = _origin(source_type)
+            st.success(f"✅ Data loaded successfully! {len(series)} rows processed.")
+            st.write("**Preview of Loaded Data (First 5 Rows):**")
+            st.write(series.head())
         st.stop()
 
+    _use_loaded_data()
     if 'df' not in st.session_state:
         st.warning("Please load data first using the 'Load Data' section.")
         return

@@ -109,3 +109,29 @@ def test_panel_prepares_a_download():
     next(b for b in app.button if b.label == "Prepare session file").click()
     app.run()
     assert not app.exception and app.get("download_button")
+
+
+def test_text_dates_stay_text_so_day_first_is_not_lost():
+    # pandas' read_json parses text columns named like "date" month-first.
+    raw = pd.DataFrame(
+        {
+            "date": ["02/01/2024", "13/01/2024"],
+            "stamp": pd.to_datetime(["2024-01-02", "2024-01-13"]),
+        }
+    )
+    state = {"raw_df": raw.copy(), "operations": []}
+    fresh = {}
+    restore_session(fresh, export_session(state, include_data=True))
+    assert fresh["raw_df"]["date"].tolist() == ["02/01/2024", "13/01/2024"]
+    assert fresh["raw_df"]["stamp"].dtype.kind == "M"
+
+
+def test_browser_preload_keeps_text_dates(tmp_path):
+    from edalens.browser import frame_json
+    from edalens.utils.data_processing import PRESET_DATA_ENV, load_preset_data
+
+    path = tmp_path / "data.json"
+    path.write_text(frame_json(pd.DataFrame({"DATE": ["02/01/2024", "13/01/2024"]})))
+    state = {}
+    assert load_preset_data(state, {PRESET_DATA_ENV: str(path)})
+    assert state["raw_df"]["DATE"].tolist() == ["02/01/2024", "13/01/2024"]

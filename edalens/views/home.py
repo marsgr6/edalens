@@ -301,6 +301,14 @@ def read_csv(source, index_first=False):
     return df.set_index(first).rename_axis(name)
 
 
+GITHUB_ENTER_KEY = "_github_link_entered"
+
+
+def _github_entered():
+    """Enter (or leaving the field) after changing the link: load it on this run."""
+    st.session_state[GITHUB_ENTER_KEY] = bool(st.session_state.get("github_link", "").strip())
+
+
 def home():
     st.subheader("🏠 Data Upload & Selection")
 
@@ -311,9 +319,12 @@ def home():
     st.markdown("**Or load a CSV from a GitHub link:**")
     github_link = st.text_input(
         "Paste the GitHub link to your CSV file",
-        placeholder="e.g., https://raw.githubusercontent.com/marsgr6/r-scripts/master/data/viz_data/sample.csv"
+        placeholder="e.g., https://raw.githubusercontent.com/marsgr6/r-scripts/master/data/viz_data/sample.csv",
+        key="github_link", on_change=_github_entered,
+        help="Press Enter or click Load from GitHub.",
     )
-    load_from_github = st.button("Load from GitHub")
+    # Enter in the field (Streamlit's on_change) loads it like the button does.
+    load_from_github = st.button("Load from GitHub") or st.session_state.pop(GITHUB_ENTER_KEY, False)
 
     st.markdown("""
     ⚠️ **Important:**  

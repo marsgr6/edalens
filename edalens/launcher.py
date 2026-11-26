@@ -128,10 +128,19 @@ class EDALensServer:
         # Where the app's "Send to Python" button saves reports (see reports()).
         self.report_dir: Optional[Path] = None
         self._process: Optional[subprocess.Popen] = None
+        self.data_path: Optional[Path] = None  # A preloaded DataFrame (show(df)), deleted on stop.
 
     @property
     def running(self) -> bool:
         return self._process is not None and self._process.poll() is None
+
+    def remove_data(self) -> None:
+        if self.data_path is not None:
+            try:
+                self.data_path.unlink()
+            except OSError:
+                pass
+            self.data_path = None
 
     def start(self, startup_timeout: float = STARTUP_TIMEOUT) -> "EDALensServer":
         """Start the server and return once it answers its health check."""
@@ -219,6 +228,7 @@ class EDALensServer:
     def stop(self, timeout: float = STOP_TIMEOUT) -> Optional[int]:
         """Stop the process started by this handle; safe to call repeatedly."""
         process = self._process
+        self.remove_data()
         if process is None:
             return None
         exited_by_itself = process.poll() is not None
@@ -275,18 +285,55 @@ class EDALensServer:
         return f'EDALens server <a href="{self.url}" target="_blank">{self.url}</a> ({state})'
 
 
+MODES = ("server", "browser")
+
+
 def show(
+    df=None,
     *,
+    mode: str = "server",
     port: Optional[int] = None,
     open_browser: bool = True,
     startup_timeout: float = STARTUP_TIMEOUT,
-) -> EDALensServer:
-    """Start EDALens on localhost without blocking and return its server handle.
+):
+    """Start EDALens on localhost without blocking, open it in a browser tab and return its handle.
+
+    ``df`` (a pandas DataFrame) is preloaded, as with ``walk(df)``.
+    ``mode="server"`` (default) runs a Streamlit server. ``mode="browser"`` serves
+    the in-browser page (stlite: Python runs in the tab, as with
+    ``walk(df, mode="browser")``) and needs no Streamlit process.
 
     ``port=None`` uses the first free port from 8501. Call ``.stop()`` on the
-    returned handle, or use it as a context manager, to shut the server down.
+    returned handle, or use it as a context manager, to shut it down.
     """
-    server = EDALensServer(choose_port(port)).start(startup_timeout)
+    if mode not in MODES:
+        raise ValueError(f"mode must be 'server' or 'browser', not {mode!r}.")
+    if df is not None:
+        import pandas as pd
+
+        if isinstance(df, pd.Series):
+            df = df.to_frame()
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError(f"show() expects a pandas DataFrame or Series, not {type(df).__name__}.")
+    if mode == "browser":
+        from edalens.browser import serve_browser
+
+        server = serve_browser(df, choose_port(port))
+    else:
+        env: Dict[str, str] = {}
+        data_path = None
+        if df is not None:
+            from edalens.notebook import PRESET_DATA_ENV, _write_data
+
+            data_path = _write_data(df)
+            env[PRESET_DATA_ENV] = str(data_path)
+        server = EDALensServer(choose_port(port), env=env)
+        server.data_path = data_path
+        try:
+            server.start(startup_timeout)
+        except BaseException:
+            server.remove_data()
+            raise
     if open_browser:
         webbrowser.open(server.url)
     return server
@@ -325,6 +372,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=STARTUP_TIMEOUT,
         help="seconds to wait for startup (default: %(default)s)",
     )
+    parser.add_argument(
+        "--browser",
+        dest="mode",
+        action="store_const",
+        const="browser",
+        default="server",
+        help="browser mode: serve the in-browser app (Python runs in the tab with stlite; "
+        "no Streamlit server, Prophet sections use a numpy version)",
+    )
+    parser.add_argument(
+        "--data",
+        metavar="CSV",
+        help="CSV file (path or URL) to preload, as edalens.show(df) does",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
 
@@ -345,9 +406,21 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
-    print("Starting EDALens...", flush=True)
+    df = None
+    if args.data:
+        import pandas as pd
+
+        try:
+            df = pd.read_csv(args.data)
+        except Exception as error:  # Missing file, bad URL, not a CSV...
+            print(f"edalens: could not read {args.data}: {error}", file=sys.stderr)
+            return 1
+    browser = args.mode == "browser"
+    print("Starting EDALens" + (" (browser mode)..." if browser else "..."), flush=True)
     try:
         server = show(
+            df,
+            mode=args.mode,
             port=args.port,
             open_browser=args.open_browser,
             startup_timeout=args.timeout,
@@ -355,7 +428,10 @@ def _run(args: argparse.Namespace) -> int:
     except LaunchError as error:
         print(f"edalens: {error}", file=sys.stderr)
         return 1
-    print(f"EDALens is running at {server.url}\nPress Ctrl+C to stop.", flush=True)
+    print(f"EDALens is running at {server.url}", flush=True)
+    if browser:
+        print("Python runs in the browser tab; the first start downloads it (20-60 s).", flush=True)
+    print("Press Ctrl+C to stop.", flush=True)
     try:
         code = server.wait()
     except KeyboardInterrupt:

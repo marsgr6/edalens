@@ -195,6 +195,56 @@ def parse_dates(values: pd.Series, dayfirst: bool) -> pd.Series:
     return parsed.where(values.astype(str).str.contains(r"\d", regex=True) | values.isna())
 
 
+MIN_DATE_SHARE = 0.8  # A text column is a date column when this share of its values parse.
+
+
+def _parse_share(values: pd.Series, dayfirst: bool) -> float:
+    present = values.notna().sum()
+    return parse_dates(values, dayfirst).notna().sum() / present if present else 0.0
+
+
+def guess_dayfirst(values: pd.Series) -> bool:
+    """Whether ambiguous dates such as 01/02/2024 are day first.
+
+    The order that parses more values wins. When both parse all of them, the one
+    whose dates form a regular series (daily, monthly...) wins: month-first data
+    read day-first jumps around inside each month.
+    """
+    if ptypes.is_datetime64_any_dtype(values):
+        return True
+    day, month = _parse_share(values, True), _parse_share(values, False)
+    if day != month:
+        return day > month
+
+    def regular(dayfirst: bool) -> bool:
+        dates = pd.DatetimeIndex(parse_dates(values, dayfirst).dropna().drop_duplicates().sort_values())
+        return len(dates) >= 3 and pd.infer_freq(dates) is not None
+
+    if regular(False) and not regular(True):
+        return False
+    return True
+
+
+def date_columns(df: pd.DataFrame) -> list:
+    """Columns that hold dates: datetime columns first, then text that parses as dates.
+
+    Numbers are left out: a column of years or IDs is not a date column.
+    """
+    found, text = [], []
+    for column in df.columns:
+        series = df[column]
+        if ptypes.is_datetime64_any_dtype(series):
+            found.append(column)
+        elif not ptypes.is_numeric_dtype(series) and not ptypes.is_bool_dtype(series) and series.notna().any():
+            sample = series.dropna().astype(str).head(500)
+            if sample.str.contains(r"\d").mean() < MIN_DATE_SHARE:
+                continue
+            share = max(_parse_share(sample, True), _parse_share(sample, False))
+            if share >= MIN_DATE_SHARE:
+                text.append((-share, column))
+    return found + [column for _, column in sorted(text, key=lambda item: item[0])]
+
+
 def _date_features(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
     column = operation["date_column"]
     _require_columns(df, [column], "Date column")
@@ -572,7 +622,9 @@ def load_preset_data(
     if not path or state.get("preset_data_loaded"):
         return False
     if path.endswith(".json"):  # In-browser mode: pickles are not portable to Pyodide's pandas.
-        raw_df = pd.read_json(path, orient="table")
+        # convert_dates=False: pandas would parse text columns named like "date" month-first;
+        # real datetime columns come back from the table schema either way.
+        raw_df = pd.read_json(path, orient="table", convert_dates=False)
     else:
         raw_df = pd.read_pickle(path)
     for key in ("filtered_df", "current_numeric_cols", "current_categorical_cols", "is_imputed", "imputed_df"):

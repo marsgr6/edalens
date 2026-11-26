@@ -80,18 +80,18 @@ sidebar to allow any column in any role.
 | Plot | Use it for | Notable options |
 |---|---|---|
 | bars | Y = None: rows counted per X (a count plot). Numeric Y: its total, mean, median, min, max or count per X (e.g. monthly kWh) | Show as counts/values or percent of total, within X or within color; grouped or stacked; value labels; error bars (SD or 95 % CI) for means; a date X (datetime or date text) on a time axis, grouped by week, month, quarter or year; bars or heatmap |
-| boxes | Distribution per group | Box or violin, swarm overlay, CI bands (68/95/99 %) |
+| boxes | Distribution per group | Box or violin, swarm overlay, mean ± CI (68/95/99 %): a point with its error bar on each box (the default with a color or facets) or a line and band across the X categories (the default otherwise), colored like and centred on each color's boxes; swarm and mean ± CI also in every facet panel |
 | lineplot | Trends across an ordered X (categories, dates or numbers) | Mean/Median/Sum/Min/Max per X step or raw values; date X on a time axis (grouped by week/month/quarter/year); CI or SD as a band or error bars; line style/width by column |
 | histogram | One numeric distribution | layer/dodge/stack, count/probability/percent/density, bars/step; **Common Norm** normalizes all colors of a panel together (each color's area is its share) instead of each on its own |
-| density 1 | Smoothed 1-D distribution (KDE) | layer/stack, cumulative, Common Norm (each curve's area is its share of the panel) |
-| density 2 | Joint distribution of two numerics | 2-D histogram (density or counts) or KDE contours; optional rug on both axes |
-| scatter | Two numerics, or three in 3D | Symbol by category, size by numeric (min-max enhance). **3D Scatter** adds a Z variable (rotatable; colour, symbol, size and opacity still apply; facets are not available in 3D) with optional projections onto the walls |
+| density 1 | Smoothed 1-D distribution (KDE) | layer/stack, cumulative, Common Norm (each curve's area is its share of the panel), rug (per color, in every facet panel) |
+| density 2 | Joint distribution of two numerics | 2-D histogram (density or counts) or KDE contours; optional rug on both axes, in every facet panel |
+| scatter | Two numerics, or three in 3D | Symbol by category, size by numeric (min-max enhance); rug on both axes, in every facet panel. **3D Scatter** adds a Z variable (rotatable; colour, symbol, size and opacity still apply; facets are not available in 3D) with optional projections onto the walls |
 | catplot | Numeric vs category, every point | strip or swarm |
 | missingno | Missing-data structure | matrix, bars, heatmap (nullity correlation), dendrogram |
 | correlation | Correlation matrix of numerics | — |
 | clustermap | Correlation matrix reordered by hierarchical clustering | z-score / standard scale |
 | pairplot | Scatter matrix with KDE diagonals | — |
-| regression | Scatter + fitted line(s) | Fit methods: Polynomial (order 1–3, CI 68/90/95/99 %) and/or LOWESS (adjustable smoothing fraction, no CI; dashed when shown with the polynomial). Optional marginal plots: rug, histogram, box or violin, one per hue group (box/violin panels grow with the number of groups and show outliers as jittered points); the Y marginal defaults to the X choice and can be changed or turned off |
+| regression | Scatter + fitted line(s) | Fit methods: Polynomial (order 1–3, CI 68/90/95/99 %) and/or LOWESS (adjustable smoothing fraction, no CI; dashed when shown with the polynomial). Optional marginal plots: rug, histogram, box or violin, one per hue group (box/violin panels grow with the number of groups and show outliers as jittered points); the Y marginal defaults to the X choice and can be changed or turned off. **Facets**: one panel per facet value, each with its own fits per color (and an optional rug; marginal plots are not combined with facets). A table under the plot gives the OLS fit of each panel and color: n, intercept, slope (SE), r, R² and p-value (polynomials: coefficients, R², adjusted R², F-test p-value), and can be added to the report |
 | heatmap | Numeric columns × observations (X = None), or category × numeric | Colormap choice. Numeric mode: pick columns (non-numeric ones are ignored), scale each column (None / Z-score / Min-max; hover shows original values), order observations (original, sort by a column, or hierarchical clustering up to 5,000 rows), cluster columns, variables on the Y or X axis |
 | ridges | Stacked densities by category or column | Falls back to numeric ridges with > 100 categories |
 | candlestick | Open/high/low/close per X step (prices, or the range of any measure per day, week, month…) | Candles from **one value column** (first, highest, lowest and last value of each step) or from existing Open/High/Low/Close columns; range slider. X text that parses as dates is plotted in date order (Day First option for 05/01/2023-style dates) |
@@ -132,11 +132,19 @@ data is loaded. Lines, bars, boxes and facet panels are drawn in that order.
 
 ## 5. Time Series
 
-This page has its **own loader** (sidebar → *Load Data*): upload or GitHub link,
-choose the date column and date format (DD/MM vs MM/DD). The format only decides
-ambiguous dates such as 05/01/2023; year-first dates (2023-01-05) are read the same
-either way. Rows with unparseable dates are dropped (with a hint when the other
-format would parse more of them); data is sorted and indexed by date.
+The page starts from the **Load data page's dataset**, cleaning steps included:
+it finds the date column and the date order on its own, and follows later changes
+made there. If that dataset has no date column, a message says so and how to add
+one (Data Cleaning → *Parse a column as dates*). Sidebar → *Load Data* can also
+upload a file or load a GitHub link just for this page.
+
+Only columns whose values read as dates are offered. The date format (DD/MM vs
+MM/DD) is preselected from the data: the order that reads more dates and, when
+both read all of them, gives evenly spaced dates. It only decides ambiguous dates
+such as 05/01/2023; year-first dates (2023-01-05) are read the same either way.
+Rows with unparseable dates are dropped (with a hint when the other format would
+parse more of them); data is sorted and indexed by date, and repeated dates are
+pointed out (combine them with a summarization frequency).
 
 **Sidebar options used by all sections**
 - Variable to analyse, or *Use multiple variables* for multi-series views.

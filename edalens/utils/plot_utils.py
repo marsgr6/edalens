@@ -124,6 +124,213 @@ def _marginal_traces(
     raise ValueError(f"Unknown marginal kind: {kind!r}. Use one of {', '.join(MARGINAL_KINDS)}.")
 
 
+RUG_SIZE = 10
+RUG_PAD = 0.06  # Rug ticks sit this share of the data range outside it.
+
+
+def facet_levels(data: pd.DataFrame, column: Optional[str], category_orders: Optional[dict] = None) -> list:
+    """Facet values in plot order: the category order when given, else order of appearance."""
+    if not column:
+        return [None]
+    present = list(pd.unique(data[column].dropna()))
+    order = (category_orders or {}).get(column)
+    if order:
+        return [value for value in order if value in set(present)]
+    return present
+
+
+def facet_panels(
+    data: pd.DataFrame,
+    facet_col: Optional[str] = None,
+    facet_row: Optional[str] = None,
+    category_orders: Optional[dict] = None,
+    bottom_up: bool = False,
+) -> tuple[int, int, list]:
+    """``(n_rows, n_cols, panels)``; each panel is ``(row, col, subset, title)``.
+
+    ``row``/``col`` are 1-based subplot positions, top row first; ``bottom_up``
+    numbers rows from the bottom as Plotly Express does (to add traces to its panels).
+    Panels with no data are kept so the grid matches Plotly Express's.
+    """
+    rows = facet_levels(data, facet_row, category_orders)
+    cols = facet_levels(data, facet_col, category_orders)
+    panels = []
+    for i, row_value in enumerate(rows):
+        for j, col_value in enumerate(cols):
+            mask = pd.Series(True, index=data.index)
+            title = []
+            if facet_row:
+                mask &= data[facet_row] == row_value
+                title.append(f"{facet_row}={row_value}")
+            if facet_col:
+                mask &= data[facet_col] == col_value
+                title.append(f"{facet_col}={col_value}")
+            row = len(rows) - i if bottom_up else i + 1
+            panels.append((row, j + 1, data[mask], " | ".join(title)))
+    return len(rows), len(cols), panels
+
+
+def rug_trace(values, axis: str, at: float, color: str, name: str, showlegend: bool = False) -> go.Scatter:
+    """Rug ticks for ``values`` along ``axis`` ('x' or 'y'), drawn at ``at`` on the other axis.
+
+    A plain scatter of tick markers, so it can go in any subplot (facet panels
+    included), unlike Plotly Express's marginal rugs.
+    """
+    values = pd.Series(values).dropna().to_numpy()
+    other = "y" if axis == "x" else "x"
+    symbol = "line-ns-open" if axis == "x" else "line-ew-open"
+    return go.Scatter(
+        **{axis: values, other: np.full(len(values), at)},
+        mode="markers",
+        marker=dict(symbol=symbol, size=RUG_SIZE, color=color, line=dict(width=1, color=color), opacity=0.6),
+        name=f"{name} rug", legendgroup=name, showlegend=showlegend, hoverinfo=axis,
+    )
+
+
+def rug_position(values, low_side: bool = True) -> float:
+    """Where a rug sits: just below (or left of) the data range of ``values``."""
+    values = pd.Series(values).dropna()
+    if values.empty:
+        return 0.0
+    low, high = float(values.min()), float(values.max())
+    span = (high - low) or abs(high) or 1.0
+    return low - RUG_PAD * span if low_side else high + RUG_PAD * span
+
+
+def regression_stats(frame: pd.DataFrame, x: str, y: str, order: int = 1) -> Optional[dict]:
+    """OLS of ``y`` on a polynomial of ``x``: n, coefficients, R², p-values.
+
+    The p-value is the slope's for a straight line, else the model's F-test.
+    ``None`` when there are too few distinct x values.
+    """
+    import statsmodels.api as sm
+
+    pairs = frame[[x, y]].dropna()
+    xs = pairs[x].to_numpy(dtype=float)
+    ys = pairs[y].to_numpy(dtype=float)
+    if np.unique(xs).size <= order or len(xs) <= order + 1:
+        return None
+    model = sm.OLS(ys, np.vander(xs, N=order + 1, increasing=True)).fit()
+    row = {"n": len(xs), "Intercept": model.params[0]}
+    if order == 1:
+        row.update({"Slope": model.params[1], "Slope SE": model.bse[1], "r": np.corrcoef(xs, ys)[0, 1],
+                    "R²": model.rsquared, "p-value": model.pvalues[1]})
+    else:
+        row.update({f"x^{k}": model.params[k] for k in range(1, order + 1)})
+        row.update({"R²": model.rsquared, "Adj. R²": model.rsquared_adj, "p-value": model.f_pvalue})
+    return row
+
+
+def _fit_traces(xs, ys, color, label, methods, order, ci_level, lowess_frac, showlegend=True) -> list:
+    """Polynomial fit with its band and/or LOWESS curve for one group."""
+    both = len(methods) > 1
+    legend = dict(legendgroup=label)
+    traces = []
+    if "Polynomial" in methods:
+        fit = polynomial_fit(xs, ys, order, ci_level)
+        if fit is not None:
+            traces.append(go.Scatter(
+                x=np.concatenate([fit["x"], fit["x"][::-1]]),
+                y=np.concatenate([fit["upper"], fit["lower"][::-1]]),
+                fill="toself", fillcolor=_rgba(color, 0.2), line=dict(color="rgba(0,0,0,0)"),
+                hoverinfo="skip", showlegend=False, **legend,
+            ))
+            traces.append(go.Scatter(
+                x=fit["x"], y=fit["fit"], mode="lines", line=dict(color=color, width=2),
+                name=f"{'Poly' if both else 'Fit'} (order {order}): {label}", showlegend=showlegend, **legend,
+            ))
+    if "LOWESS" in methods:
+        fit = lowess_fit(xs, ys, lowess_frac)
+        if fit is not None:
+            traces.append(go.Scatter(
+                x=fit["x"], y=fit["fit"], mode="lines", line=dict(color=color, width=2, dash="dash" if both else "solid"),
+                name=f"LOWESS (frac {lowess_frac:.2f}): {label}", showlegend=showlegend, **legend,
+            ))
+    return traces
+
+
+def facet_regression(
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    hue: Optional[str] = None,
+    facet_col: Optional[str] = None,
+    facet_row: Optional[str] = None,
+    methods: Sequence[str] = ("Polynomial",),
+    order: int = 1,
+    ci_level: float = 95,
+    lowess_frac: float = 2 / 3,
+    palette: Sequence[str] = DEFAULT_PALETTE,
+    category_orders: Optional[dict] = None,
+    point_size: int = 5,
+    rug: bool = False,
+) -> tuple[go.Figure, pd.DataFrame]:
+    """Regression plot in facet panels, with one OLS summary row per panel and color.
+
+    Each panel gets its own scatter and fits (per hue group), like
+    ``regression_figure`` without marginals. The table has the facet values,
+    the hue group and ``regression_stats`` for each.
+    """
+    _check_regression_inputs(data, x, y, methods)
+    use_hue = hue is not None and hue in data.columns and hue not in (x, y)
+    groups = facet_levels(data, hue, category_orders) if use_hue else [None]
+    colors = {group: palette[i % len(palette)] for i, group in enumerate(groups)}
+    n_rows, n_cols, panels = facet_panels(data, facet_col, facet_row, category_orders)
+    fig = make_subplots(
+        rows=n_rows, cols=n_cols, shared_xaxes=True, shared_yaxes=True,
+        subplot_titles=[title for *_, title in panels] if (facet_col or facet_row) else None,
+        horizontal_spacing=0.04, vertical_spacing=0.08 if n_rows > 1 else 0.0,
+    )
+    x_rug, y_rug = rug_position(data[x]), rug_position(data[y])
+    legend_done, rows = set(), []
+    for row, col, subset, _ in panels:
+        for group in groups:
+            part = subset[subset[hue] == group] if group is not None else subset
+            pairs = part[[x, y]].dropna()
+            if pairs.empty:
+                continue
+            label = str(group) if group is not None else "Data"
+            first = label not in legend_done
+            legend_done.add(label)
+            xs, ys = pairs[x].to_numpy(dtype=float), pairs[y].to_numpy(dtype=float)
+            color = colors[group]
+            fig.add_trace(go.Scatter(x=xs, y=ys, mode="markers", marker=dict(color=color, size=point_size),
+                                     name=label, legendgroup=label, showlegend=first), row=row, col=col)
+            for trace in _fit_traces(xs, ys, color, label, methods, order, ci_level, lowess_frac, showlegend=first):
+                fig.add_trace(trace, row=row, col=col)
+            if rug:
+                fig.add_trace(rug_trace(xs, "x", y_rug, color, label), row=row, col=col)
+                fig.add_trace(rug_trace(ys, "y", x_rug, color, label), row=row, col=col)
+            stats = regression_stats(pairs, x, y, order)
+            if stats is not None:
+                keys = {}
+                if facet_row:
+                    keys[facet_row] = subset[facet_row].iloc[0]
+                if facet_col:
+                    keys[facet_col] = subset[facet_col].iloc[0]
+                if use_hue:
+                    keys[hue] = group
+                rows.append({**keys, **stats})
+    title = "Regression Plot"
+    if "Polynomial" in methods:
+        title += f" with {ci_level:g}% Confidence Interval"
+    fig.update_layout(title=title, width=max(800, 320 * n_cols), height=max(480, 330 * n_rows) + 80)
+    fig.update_xaxes(title_text=x, row=n_rows)
+    fig.update_yaxes(title_text=y, col=1)
+    return fig, pd.DataFrame(rows)
+
+
+def _check_regression_inputs(data: pd.DataFrame, x: str, y: str, methods: Sequence[str]) -> None:
+    for column in (x, y):
+        if column not in data.columns:
+            raise ValueError(f"Column '{column}' is not in the data.")
+        if not pd.api.types.is_numeric_dtype(data[column]) or pd.api.types.is_bool_dtype(data[column]):
+            raise ValueError(f"Regression needs numeric X and Y; '{column}' is not numeric.")
+    unknown = [m for m in methods if m not in FIT_METHODS]
+    if unknown:
+        raise ValueError(f"Unknown fit method(s): {', '.join(unknown)}.")
+
+
 def regression_figure(
     data: pd.DataFrame,
     x: str,

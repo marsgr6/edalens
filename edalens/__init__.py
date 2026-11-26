@@ -5,6 +5,7 @@
 >>> app.url
 >>> app.stop()
 
+``edalens.show(df, mode="browser")`` (or ``edalens --browser``) runs it in the browser tab instead.
 In Jupyter, ``edalens.walk(df)`` shows the app inside the notebook with ``df`` loaded;
 ``edalens.walk(df, mode="browser")`` runs it in the browser with no server (pygwalker style).
 In Google Colab, ``edalens.run_colab()`` also opens a public localtunnel link.

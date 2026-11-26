@@ -74,7 +74,7 @@ def restore_session(state: MutableMapping[str, Any], text: str | bytes,
     """
     payload = read_session(text)
     if payload.get("data"):
-        raw = pd.read_json(io.StringIO(payload["data"]), orient="table")
+        raw = pd.read_json(io.StringIO(payload["data"]), orient="table", convert_dates=False)
     else:
         raw = data if data is not None else state.get("raw_df")
         if raw is None:

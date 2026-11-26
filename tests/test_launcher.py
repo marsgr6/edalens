@@ -217,3 +217,60 @@ def test_real_streamlit_server_starts_serves_and_stops():
         assert server.stop() is not None
     assert not server.running
     assert launcher.port_is_free(server.port)
+
+
+def test_browser_mode_serves_the_page_and_cleans_up():
+    import pandas as pd
+
+    df = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+    with edalens.show(df, mode="browser", open_browser=False) as page:
+        assert page.running and page.url.endswith("/index.html")
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(page.url, timeout=5) as response:
+            body = response.read().decode()
+        assert response.status == 200 and "stlite" in body
+        assert '\\"a\\"' in body or '"a"' in body  # The DataFrame is embedded.
+        path = page.path
+    assert not page.running and not path.exists()
+
+
+def test_browser_mode_cli(monkeypatch, capsys, tmp_path):
+    csv = tmp_path / "data.csv"
+    csv.write_text("a,b\n1,x\n2,y\n")
+    served = []
+
+    def interrupt(self):
+        served.append(fetch(self.url))
+        raise KeyboardInterrupt
+
+    from edalens.browser import BrowserPageServer
+
+    monkeypatch.setattr(BrowserPageServer, "wait", interrupt)
+    assert launcher.main(["--browser", "--data", str(csv), "--no-browser"]) == 0
+    output = capsys.readouterr().out
+    assert served == [200] and "browser mode" in output and "EDALens stopped." in output
+
+
+def test_cli_reports_an_unreadable_data_file(capsys, tmp_path):
+    assert launcher.main(["--data", str(tmp_path / "missing.csv"), "--no-browser"]) == 1
+    assert "could not read" in capsys.readouterr().err
+
+
+def test_show_preloads_data_in_server_mode(fake_streamlit):
+    import pandas as pd
+
+    server = edalens.show(pd.DataFrame({"a": [1]}), open_browser=False)
+    try:
+        path = server.data_path
+        assert path.exists() and server.env["EDALENS_DATA"] == str(path)
+        assert pd.read_pickle(path)["a"].tolist() == [1]
+    finally:
+        server.stop()
+    assert not path.exists()
+
+
+def test_show_refuses_unknown_modes_and_non_frames():
+    with pytest.raises(ValueError):
+        edalens.show(mode="lite", open_browser=False)
+    with pytest.raises(TypeError):
+        edalens.show([1, 2], open_browser=False)
