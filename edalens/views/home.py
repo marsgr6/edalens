@@ -12,6 +12,7 @@ from edalens.utils.data_processing import (
     set_working_df,
     undo_last_operation,
 )
+from edalens.utils.ui import in_browser
 
 
 def _run(operation, success_message):
@@ -64,7 +65,7 @@ def _natural_key(text):
     return [(0, int(part), "") if part.isdigit() else (1, 0, part.lower()) for part in re.split(r"(\d+)", text)]
 
 
-RENAME, ORDER, DATES = "✏️ Rename a column", "🔤 Order category labels", "📆 Parse a column as dates"
+RENAME, ORDER, DATES = "✏️ Rename or index a column", "🔤 Order category labels", "📆 Parse a column as dates"
 FILTER, BINS, RECODE = "🔎 Filter rows", "📏 Bin a numeric column", "🔁 Recode values of a category"
 # One tool shown at a time, picked from a row of options. Expanders were tried: opening
 # one from the app after a step re-creates it, and the page jumps under the pointer.
@@ -86,7 +87,8 @@ def _remembered(name, options=None):
     if key not in st.session_state and name in saved and (options is None or saved[name] in options):
         st.session_state[key] = saved[name]
     if options is not None and key in st.session_state and st.session_state[key] not in options:
-        del st.session_state[key]
+        # Set, not deleted: a deleted key leaves the browser showing the vanished column.
+        st.session_state[key] = options[0]
     return key
 
 
@@ -156,6 +158,15 @@ def _cleaning(df):
             if st.button("Rename", key=_key("rename_apply"), disabled=new_name.strip() in ("", str(column))):
                 _apply({"type": "rename_columns", "mapping": {column: new_name.strip()}},
                               f"Renamed {column} to {new_name.strip()}.", RENAME)
+            index_name = df.index.name
+            st.caption("The row index labels each row (an ID, a name, a date). It is shown in the previews, "
+                       "kept in the downloaded CSV and leaves the column lists of the plots.")
+            left, right = st.columns(2)
+            if left.button(f"Use {column} as the row index", key=_key("index_apply")):
+                _apply({"type": "set_index", "column": column}, f"{column} is now the row index.", RENAME)
+            if index_name is not None and right.button(f"Move the index ({index_name}) back to a column",
+                                                       key=_key("index_reset")):
+                _apply({"type": "reset_index"}, f"{index_name} is a column again.", RENAME)
             _last_result(RENAME)
 
     if tool == ORDER:
@@ -251,10 +262,17 @@ def _cleaning(df):
                 if len(labels) > MAX_RECODE_VALUES:
                     st.warning(f"{column} has {len(labels)} distinct values; only the first {MAX_RECODE_VALUES} are listed.")
                     labels = labels[:MAX_RECODE_VALUES]
-                table = pd.DataFrame({"Value": labels, "New value": labels})
-                edited = st.data_editor(table, disabled=["Value"], hide_index=True, key=_key(f"recode_{column}"))
-                mapping = {row["Value"]: str(row["New value"]).strip() for _, row in edited.iterrows()
-                           if pd.notna(row["New value"]) and str(row["New value"]).strip() != row["Value"]}
+                if in_browser():  # stlite's st.data_editor fails (NameError: arrow_table).
+                    left, right = st.columns([2, 1])
+                    chosen = left.multiselect("Values to change", labels, key=_key(f"recode_from_{column}"))
+                    target = right.text_input("New value", value=chosen[0] if chosen else "",
+                                              key=_key(f"recode_to_{column}_{'|'.join(chosen)}")).strip()
+                    mapping = {value: target for value in chosen if target and value != target}
+                else:
+                    table = pd.DataFrame({"Value": labels, "New value": labels})
+                    edited = st.data_editor(table, disabled=["Value"], hide_index=True, key=_key(f"recode_{column}"))
+                    mapping = {row["Value"]: str(row["New value"]).strip() for _, row in edited.iterrows()
+                               if pd.notna(row["New value"]) and str(row["New value"]).strip() != row["Value"]}
                 if st.button("Apply recoding", key=_key("recode_apply"), disabled=not mapping):
                     _apply({"type": "recode_values", "column": column, "mapping": mapping},
                                   f"Recoded {len(mapping)} value{'s' if len(mapping) != 1 else ''} of {column}.", RECODE)
@@ -262,10 +280,34 @@ def _cleaning(df):
 
 
 
+NA_VALUES = ['', 'NA', 'N/A', 'na', 'n/a', 'NaN', 'nan', 'NULL', 'null', 'missing', '-', '--']
+INDEX_SUFFIX = " (first column as index)"
+
+
+def read_csv(source, index_first=False):
+    """Read a CSV; with ``index_first`` its first column becomes the row index.
+
+    An unnamed first column (pandas' own row numbers) is named "index". A column
+    with repeated or missing labels cannot be an index, so it stays a column.
+    """
+    df = pd.read_csv(source, na_values=NA_VALUES, keep_default_na=True)
+    if not index_first or df.shape[1] < 2:
+        return df
+    first = df.columns[0]
+    if df[first].isna().any() or not df[first].is_unique:
+        st.warning(f"The first column ({first}) has repeated or missing values, so it was kept as a column.")
+        return df
+    name = "index" if str(first).startswith("Unnamed: ") else first
+    return df.set_index(first).rename_axis(name)
+
+
 def home():
     st.subheader("🏠 Data Upload & Selection")
 
     uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+    index_first = st.checkbox("The first column is the row index", key="read_index_col",
+                              help="For files saved with their index, such as pandas' to_csv(), whose first "
+                                   "column is an ID, a name or an unnamed row number. Changing it reads the file again.")
     st.markdown("**Or load a CSV from a GitHub link:**")
     github_link = st.text_input(
         "Paste the GitHub link to your CSV file",
@@ -338,7 +380,7 @@ def home():
                 response = requests.get(github_link)
                 response.raise_for_status()
                 csv_content = response.content.decode('utf-8')
-                raw_df = pd.read_csv(io.StringIO(csv_content), na_values=['', 'NA', 'N/A', 'na', 'n/a', 'NaN', 'nan', 'NULL', 'null', 'missing', '-', '--'], keep_default_na=True)
+                raw_df = read_csv(io.StringIO(csv_content), index_first)
                 st.session_state["operations"] = []
                 st.session_state["last_uploaded_file"] = github_link
                 st.session_state.pop("filtered_df", None)
@@ -359,15 +401,17 @@ def home():
 
     if uploaded_file:
         na_values = ['', 'NA', 'N/A', 'na', 'n/a', 'NaN', 'nan', 'NULL', 'null', 'missing', '-', '--']
-        if "last_uploaded_file" not in st.session_state or uploaded_file.name != st.session_state["last_uploaded_file"]:
+        source = uploaded_file.name + (INDEX_SUFFIX if index_first else "")
+        if "last_uploaded_file" not in st.session_state or source != st.session_state["last_uploaded_file"]:
             st.session_state["operations"] = []
-            st.session_state["last_uploaded_file"] = uploaded_file.name
+            st.session_state["last_uploaded_file"] = source
             st.session_state.pop("filtered_df", None)
             st.session_state.pop("current_numeric_cols", None)
             st.session_state.pop("current_categorical_cols", None)
             st.session_state.pop("is_imputed", None)
             st.session_state.pop("imputed_df", None)
-        raw_df = pd.read_csv(uploaded_file, na_values=na_values, keep_default_na=True)
+        uploaded_file.seek(0)
+        raw_df = read_csv(uploaded_file, index_first)
         st.success(f"File '{uploaded_file.name}' successfully uploaded!")
         st.session_state["raw_df"] = raw_df.copy()
         if "filtered_df" not in st.session_state:
@@ -492,7 +536,8 @@ def home():
 
         st.subheader("💾 Download Processed Data")
         if "filtered_df" in st.session_state:
-            csv = st.session_state["filtered_df"].to_csv(index=False).encode('utf-8')
+            processed = st.session_state["filtered_df"]
+            csv = processed.to_csv(index=processed.index.name is not None).encode('utf-8')
             st.download_button(
                 label="Download Processed Data as CSV",
                 data=csv,

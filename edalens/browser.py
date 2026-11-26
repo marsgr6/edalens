@@ -12,7 +12,8 @@ local Jupyter and VS Code.
 
 Trade-offs against the server mode: the first start downloads Pyodide and the
 packages (tens of MB, cached by the browser afterwards) and takes 20-60 s;
-Prophet cannot run in WebAssembly, so forecasting is unavailable; and the
+Prophet's Stan engine cannot run in WebAssembly, so Prophet sections use a numpy
+version of its model (``edalens.utils.prophet_lite``); and the
 DataFrame travels inside the notebook, so very large frames make the output
 (and a saved notebook) large.
 """
@@ -32,7 +33,8 @@ from edalens.launcher import app_script
 # Pinned: stlite's mount API changes between releases.
 STLITE_VERSION = "1.11.0"
 STLITE_URL = f"https://cdn.jsdelivr.net/npm/@stlite/browser@{STLITE_VERSION}/build"
-# Runtime dependencies that Pyodide can install. prophet has no WebAssembly build;
+# Runtime dependencies that Pyodide can install. prophet has no WebAssembly build
+# (edalens.utils.prophet_lite stands in for it);
 # plotly-calplot pins numpy<2 and the app does not import it.
 BROWSER_REQUIREMENTS = [
     "matplotlib",

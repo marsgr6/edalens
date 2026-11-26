@@ -1,5 +1,6 @@
 """Time Series page: pandas-version-safe frequencies and the in-browser menu."""
 
+import json
 import sys
 
 import pandas as pd
@@ -41,8 +42,26 @@ def monthly_csv(years: int = 8) -> bytes:
     return frame.to_csv(index=False).encode()
 
 
-@pytest.mark.parametrize("model", ["Holt-Winters (ETS)", "SARIMA"])
-def test_forecasting_section_runs_statsmodels_models(monkeypatch, model):
+def has_prophet() -> bool:
+    try:
+        import prophet  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "Holt-Winters (ETS)",
+        "SARIMA",
+        pytest.param(
+            "Prophet",
+            marks=pytest.mark.skipif(not has_prophet(), reason="prophet not installed"),
+        ),
+    ],
+)
+def test_forecasting_section_runs_every_model(monkeypatch, model):
     import requests
 
     class Response:
@@ -71,6 +90,13 @@ def test_forecasting_section_runs_statsmodels_models(monkeypatch, model):
     assert not app.exception
     assert not app.warning, [w.value for w in app.warning]
     assert any("observations" in caption.value for caption in app.caption)
+    # Every model, Prophet included, flags anomalies on its residuals.
+    assert any("anomalous points flagged" in c.value for c in app.caption)
+    traces = [
+        t.get("name")
+        for t in json.loads(app.get("plotly_chart")[-1].proto.spec)["data"]
+    ]
+    assert {"Observed", "Fitted", "Forecast"} <= set(traces)
 
 
 def test_loader_reads_iso_dates_with_day_first_selected(monkeypatch):
@@ -218,3 +244,47 @@ def test_every_section_opens_with_its_defaults(monkeypatch, section, several):
         app.sidebar.multiselect[0].set_value(["load", "temp"])
         app.run()
     assert not app.exception, app.exception[0].message
+
+
+@pytest.mark.parametrize(
+    "section", ["Forecasting", "Decomposition & ACF/PACF", "Changepoint Analysis"]
+)
+def test_prophet_sections_run_with_the_browser_version(monkeypatch, section):
+    """In browser mode Prophet is the numpy LiteProphet; every Prophet section uses it."""
+    import requests
+
+    from edalens.utils import prophet_lite
+
+    monkeypatch.setenv(prophet_lite.LITE_ENV, "lite")
+    monkeypatch.setattr(time_series, "Prophet", prophet_lite.LiteProphet)
+    monkeypatch.setattr(time_series, "PROPHET_LITE", True)
+
+    class Response:
+        content = monthly_csv()
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(sys, "platform", "emscripten")
+    app = AppTest.from_function(time_series_page, default_timeout=60)
+    app.run()
+    next(r for r in app.radio if r.label == "Select data source").set_value(
+        "GitHub Link"
+    )
+    app.run()
+    app.text_input[0].set_value("https://example.com/rain.csv")
+    app.run()
+    app.sidebar.radio[0].set_value(section)
+    app.run()
+    if section == "Forecasting":
+        next(s for s in app.selectbox if s.label == "Model").set_value("Prophet")
+    elif section.startswith("Decomposition"):
+        next(
+            s for s in app.selectbox if s.label == "Select Decomposition Method"
+        ).set_value("Prophet")
+    app.run()
+    assert not app.exception
+    assert not app.warning, [w.value for w in app.warning]
+    assert any(prophet_lite.LABEL in c.value for c in app.caption)
+    assert app.get("plotly_chart")

@@ -362,3 +362,74 @@ def test_pickers_stay_on_the_column_being_edited():
     assert app.number_input(key="clean_bin_count").value == 3
     use(app, "ORDER")
     assert app.selectbox(key="clean_order_column").value == "day"
+
+
+def test_set_and_reset_the_row_index():
+    data = frame().assign(id=["a", "b", "c", "d", "e"])
+    out = apply_operation(data, {"type": "set_index", "column": "id"})
+    assert out.index.name == "id" and "id" not in out.columns
+    # A second index keeps the first one as a column.
+    again = apply_operation(out, {"type": "set_index", "column": "age"})
+    assert again.index.name == "age" and "id" in again.columns
+    back = apply_operation(out, {"type": "reset_index"})
+    assert back.columns[0] == "id" and back.index.tolist() == [0, 1, 2, 3, 4]
+    for bad in ("day", "size"):  # Repeated labels; a missing label.
+        with pytest.raises(OperationError):
+            apply_operation(data, {"type": "set_index", "column": bad})
+    with pytest.raises(OperationError):
+        apply_operation(data, {"type": "reset_index"})
+
+
+def test_read_csv_with_the_first_column_as_index():
+    import io
+
+    from edalens.views.home import read_csv
+
+    text = frame().to_csv()  # Saved with pandas' row numbers, an unnamed first column.
+    assert read_csv(io.StringIO(text)).columns[0] == "Unnamed: 0"
+    out = read_csv(io.StringIO(text), index_first=True)
+    assert out.index.name == "index" and list(out.columns) == list(frame().columns)
+    repeated = frame()[["day", "age"]].to_csv(index=False)
+    assert "day" in read_csv(io.StringIO(repeated), index_first=True).columns
+
+
+def test_index_tool_on_the_load_page():
+    app = home_app()
+    app.session_state["filtered_df"] = frame().assign(id=list("abcde"))
+    app.run()
+    app.selectbox(key="clean_rename_column").set_value("id")
+    app.run()
+    app.button(key="index_apply_0").click()
+    app.run()
+    assert not app.exception
+    assert app.session_state["filtered_df"].index.name == "id"
+    app.button(key="index_reset_1").click()
+    app.run()
+    assert "id" in app.session_state["filtered_df"].columns
+
+
+def test_recode_in_the_browser_without_data_editor(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(
+        sys, "platform", "emscripten"
+    )  # stlite: st.data_editor fails there.
+    app = home_app()
+    app.run()
+    use(app, "RECODE")
+    app.selectbox(key="clean_recode_column").set_value("day")
+    app.run()
+    app.multiselect(key="recode_from_day_0").set_value(["Sun", "Tue"])
+    app.run()
+    app.text_input(key="recode_to_day_Sun|Tue_0").set_value("Other")
+    app.run()
+    app.button(key="recode_apply_0").click()
+    app.run()
+    assert not app.exception
+    assert app.session_state["filtered_df"]["day"].tolist() == [
+        "Other",
+        "Mon",
+        "Other",
+        "Other",
+        "Mon",
+    ]

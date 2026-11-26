@@ -14,7 +14,8 @@ from sklearn.ensemble import IsolationForest
 
 ETS = "Holt-Winters (ETS)"
 SARIMA = "SARIMA"
-METHODS = (ETS, SARIMA)
+PROPHET = "Prophet"
+METHODS = (ETS, SARIMA)  # statsmodels; Prophet is offered only where it is installed.
 
 # Season length per summarization frequency (None: no seasonality).
 SEASON_BY_GRANULARITY = {
@@ -121,6 +122,8 @@ def fit_forecast(
     (future only, with a ``ci_level`` % prediction interval).
     """
     alpha = 1 - ci_level / 100
+    if method == PROPHET:
+        return _prophet_forecast(series, horizon, ci_level)
     try:
         if method == ETS:
             from statsmodels.tsa.exponential_smoothing.ets import ETSModel
@@ -179,6 +182,45 @@ def fit_forecast(
         ) from exc
     history = pd.DataFrame({"observed": series, "fitted": fitted})
     return pd.concat([history, future])
+
+
+def prophet_series(series: pd.Series) -> pd.Series:
+    """Prophet takes uneven dates: the regular series when there is one, else the raw one."""
+    try:
+        return regular_series(series)
+    except ForecastError:
+        series = series.dropna()
+        series = series[~series.index.duplicated(keep="last")].sort_index()
+        if len(series) < 8:
+            raise
+        return series
+
+
+def _prophet_forecast(series: pd.Series, horizon: int, ci_level: float) -> pd.DataFrame:
+    """Prophet in the same frame layout as ``fit_forecast`` (fitted = in-sample yhat)."""
+    import logging
+
+    from edalens.utils.prophet_lite import prophet_class
+
+    Prophet, _ = prophet_class()
+    logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
+    history = pd.DataFrame({"ds": series.index.tz_localize(None) if series.index.tz else series.index,
+                            "y": series.astype(float).to_numpy()})
+    try:
+        model = Prophet(interval_width=ci_level / 100)
+        model.fit(history)
+        freq = series.index.freq or pd.infer_freq(series.index) or "D"
+        future = model.make_future_dataframe(periods=horizon, freq=freq)
+        prediction = model.predict(future).set_index("ds")
+    except Exception as exc:  # Stan and pandas errors alike.
+        raise ForecastError(f"Prophet could not be fitted to this series ({exc}).") from exc
+    past = prediction.iloc[: len(history)]
+    ahead = prediction.iloc[len(history):]
+    frame = pd.DataFrame({"observed": history["y"].to_numpy(), "fitted": past["yhat"].to_numpy()},
+                         index=pd.DatetimeIndex(history["ds"]))
+    future_frame = pd.DataFrame({"forecast": ahead["yhat"], "lower": ahead["yhat_lower"],
+                                 "upper": ahead["yhat_upper"]})
+    return pd.concat([frame, future_frame])
 
 
 def residual_anomalies(result: pd.DataFrame, contamination: float = 0.05) -> pd.Series:

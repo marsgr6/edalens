@@ -9,6 +9,10 @@ same manual with screenshots.
 - *Upload CSV* from your computer, or
 - *Load from GitHub*: paste a `.csv` link. `github.com/.../blob/...` links are
   converted to `raw.githubusercontent.com` automatically.
+- *The first column is the row index*: for files saved with their index (such as
+  pandas' `to_csv()`). An unnamed first column becomes `index`; a column with
+  repeated or missing labels stays a column. The processed CSV download keeps a
+  named index.
 
 **Operation tracking (undo).** Every step is recorded. The checkbox *Enable
 Operation Tracking for Undo* shows the history and an *Undo Last Operation*
@@ -36,12 +40,12 @@ Each tool is a step in the operation history, so **Undo** and saved sessions rep
 
 | Tool | What it does |
 |---|---|
-| Rename a column | New name; refused if it would duplicate another column |
+| Rename or index a column | New name (refused if it would duplicate another column); or use the column as the row index (unique, no missing labels), and move the index back to a column |
 | Order category labels | Fix the order of a text column's labels: current, A → Z / Z → A (numbers inside labels sort as numbers: item 2 before item 10), most/least frequent, or calendar (months, weekdays), then adjust by hand. Plots start from this order; each plot's Custom Order can still change it |
 | Parse a column as dates | Turn date text into a date column (day-first optional); values that are not dates become missing, and the page shows how many |
 | Filter rows | Keep a range of a numeric column, a date range, or chosen values of a text column |
 | Bin a numeric column | New categorical column of equal-width or quantile bins, ordered from low to high |
-| Recode values | Edit a table of labels to fix typos or merge labels (give several the same new value) |
+| Recode values | Edit a table of labels to fix typos or merge labels (give several the same new value); in browser mode, pick the labels and type their new value |
 
 Then *Preview* the result and *Download Processed Data as CSV*.
 
@@ -147,8 +151,10 @@ format would parse more of them); data is sorted and indexed by date.
 | Temporal Profiles | Box or line plot by hour, weekday, month, quarter or year |
 | Calendar Heatmap | GitHub-style daily calendar, or hourly month grid |
 | Heatmap Profiles | Month×year, hour, weekday, week-of-year heatmaps with mean/median/sum/min/max/std |
-| Forecasting | Prophet forecast with uncertainty band; horizon slider adapts to the frequency |
+| Forecasting | Prophet, Holt-Winters (ETS) or SARIMA forecast with a prediction-interval band; anomalies flagged by Isolation Forest on the model's residuals; horizon slider adapts to the frequency |
 | Changepoint Analysis | Prophet changepoints, selected by importance percentile (Auto) or a fixed count |
+
+In browser mode, Prophet is a numpy version of its model (`edalens/utils/prophet_lite.py`): same trend, changepoint prior and seasonality, results close to Prophet's.
 | Trend Analysis | Linear and quadratic trend lines over the observed series |
 
 ## 6. Report

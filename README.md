@@ -36,7 +36,7 @@ edalens.show()                      # the app in its own browser tab
 | **Missing Data Imputation** | Per-column missing counts/percentages · drop rows with any NaN or mostly-empty columns · impute chosen columns: KNN (choose k), mean, median, zero or interpolation for numbers; most frequent value or a "Missing" label for text |
 | **Statistics** | Summary table (type, missing, unique, mean/median/SD, skew, outliers) and duplicate rows · group comparisons (t-test/ANOVA or Mann-Whitney/Kruskal-Wallis with effect sizes; chi-square with Cramér's V) · Pearson/Spearman/Kendall correlations with p-values and top pairs · outlier view (IQR or z-score) with an option to exclude the rows |
 | **Visualization** | 17 plot types: bars (counts with Y = None, or a numeric Y summed/averaged per category or per week/month/year of a date X, as values or percentages), boxes (box/violin), lineplot (mean/median/sum per X step or raw values, date X on a time axis, CI band), histogram, density 1 (1-D KDE), density 2 (2-D hist/KDE), scatter (2-D or 3-D), catplot (strip/swarm), missingno-style plots, correlation, clustermap, pairplot, regression (poly order 1–3 + CI and/or LOWESS, marginal rug/histogram/box/violin), heatmap (numeric columns with scaling/sorting/clustering), ridges, candlestick (OHLC per step, optional hidden weekend gaps), waterfall. Every chart downloads as PDF; the main ones show **Python code** that recreates them. Large data is sampled for point-heavy plots. Shared X / Y / Color / Facet-col / Facet-row / Size mapping, custom category order, high-cardinality warnings |
-| **Time Series** | Own data loader (date column + day-first/month-first) · resampling (hourly → yearly, mean/sum) and rolling smoothing · multi-variable mode · decomposition (statsmodels or Prophet) + ACF/PACF · Isolation-Forest anomaly detection · temporal profiles · calendar heatmaps · profile heatmaps · Prophet forecasting · Prophet changepoint analysis · linear/polynomial trend |
+| **Time Series** | Own data loader (date column + day-first/month-first) · resampling (hourly → yearly, mean/sum) and rolling smoothing · multi-variable mode · decomposition (statsmodels or Prophet) + ACF/PACF · Isolation-Forest anomaly detection · temporal profiles · calendar heatmaps · profile heatmaps · forecasting (Prophet, ETS, SARIMA) with residual anomalies · Prophet changepoint analysis · linear/polynomial trend |
 | **Report** | Charts and tables saved with ➕ Add to report, plus text blocks: rename, annotate and reorder them, then export a static HTML dashboard (with contents) or a PDF, publish it as a link served by the app, or send it to Python (`app.report()`) |
 | **💾 Session** (sidebar) | Save the data, all steps, plot settings, category orders and report to one file; open it later to continue |
 | **About** | Built-in user manual with screenshots and example datasets |
@@ -143,8 +143,12 @@ app.save("edalens.html")          # optional: a standalone page that opens in an
 
 The app's code and the DataFrame are embedded in the cell output; the browser
 downloads Pyodide and the packages from jsDelivr on first use (20–60 s, then
-cached). Differences from the server mode: Prophet cannot run in WebAssembly,
-so forecasting is unavailable; the sidebar uses a plain radio menu (stlite
+cached). Differences from the server mode: Prophet's Stan engine cannot run in
+WebAssembly, so the Prophet sections (forecasting, decomposition, changepoints)
+use a numpy version of Prophet's model — piecewise-linear trend with sparse
+changepoints, Fourier seasonality and Prophet's simulated intervals — whose
+results are close to Prophet's but not identical (set `EDALENS_PROPHET=lite` to
+use it in server mode and compare); the sidebar uses a plain radio menu (stlite
 cannot load custom components); the "Download Processed Data" button does not
 work; and a large DataFrame makes the output, and a saved notebook, large
 (sample it first). Changes made in the app do not flow back to the kernel.
@@ -324,7 +328,6 @@ The main points (details and suggested fixes in
 
 - Time Series uses a separate data loader; data prepared on Home is not reused there.
 - Prophet models are refit on every interaction (no caching), so forecasting/changepoints are slow.
-- Forecasting with frequency “None” likely fails (`freq=None` passed to Prophet).
 - Unpinned dependencies and deprecated pandas APIs (`fillna(method=...)`, `"H"/"M"/"Q"/"Y"` aliases).
 - Two duplicate legacy files remain at the root; they are excluded from the installed package.
 

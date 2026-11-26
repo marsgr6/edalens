@@ -4,21 +4,11 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-try:
-    from prophet import Prophet
+from edalens.utils.prophet_lite import LABEL as PROPHET_LITE_LABEL, prophet_class
 
-    PROPHET_AVAILABLE = True
-except ImportError:  # In-browser mode (edalens.walk(mode="browser")): prophet cannot run in WebAssembly.
-    PROPHET_AVAILABLE = False
-
-    class Prophet:
-        """Stand-in that explains why Prophet-based sections are unavailable."""
-
-        def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "Prophet is not available when EDALens runs inside the browser; "
-                "use edalens.walk(df) or edalens.show() for forecasting."
-            )
+# Real Prophet where installed; in browser mode (Stan cannot run in WebAssembly)
+# a numpy model with Prophet's trend, changepoints and seasonality.
+Prophet, PROPHET_LITE = prophet_class()
 from sklearn.ensemble import IsolationForest
 from statsmodels.tsa.seasonal import seasonal_decompose
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
@@ -43,14 +33,12 @@ FREQ = _frequency_aliases()
 CALENDAR_YEAR_PX = 180  # Height per year of the daily calendar heatmap.
 
 
-def _require_prophet(section):
-    """Explain and stop the page when Prophet cannot run (in-browser mode)."""
-    if not PROPHET_AVAILABLE:
-        st.info(
-            f"**{section}** uses Prophet, which cannot run when EDALens runs inside the browser "
-            "(`edalens.walk(df, mode=\"browser\")`). Use `edalens.walk(df)` or `edalens.show()` for this section."
-        )
-        st.stop()
+def _prophet_note():
+    """In browser mode, say which Prophet ran."""
+    if PROPHET_LITE:
+        st.caption(f"ℹ️ {PROPHET_LITE_LABEL}: Prophet's trend, changepoint and seasonality model fitted "
+                   "with numpy, since Prophet itself cannot run in the browser. Results are close to "
+                   "Prophet's, not identical; `edalens.walk(df)` runs the real one.")
 
 
 # Forecast horizon slider (min, max, default) per summarization frequency.
@@ -61,8 +49,8 @@ HORIZON_BY_GRANULARITY = {
 }
 
 
-def _statsmodels_forecasting(df, variables, method, time_granularity, aggregation_method, resample_map):
-    """Forecast each variable with a statsmodels model; works in the browser too."""
+def _forecasting(df, variables, method, time_granularity, aggregation_method, resample_map):
+    """Forecast each variable (one tab each) with ETS, SARIMA or Prophet, flagging anomalies."""
     unit, low, high, default = HORIZON_BY_GRANULARITY[time_granularity]
     horizon = st.slider(f"Forecast horizon ({unit})", low, high, default)
     col_ci, col_flag, col_contamination = st.columns(3)
@@ -81,8 +69,10 @@ def _statsmodels_forecasting(df, variables, method, time_granularity, aggregatio
             if time_granularity != "None":
                 series = series.resample(resample_map[time_granularity]).agg(aggregation_method.lower())
             try:
-                series = forecasting.regular_series(series)
-                season = forecasting.season_length(series, time_granularity)
+                series = (forecasting.prophet_series(series) if method == forecasting.PROPHET
+                          else forecasting.regular_series(series))
+                season = (None if method == forecasting.PROPHET
+                          else forecasting.season_length(series, time_granularity))
                 with st.spinner(f"Fitting {method}..."):
                     result = forecasting.fit_forecast(series, method, horizon, season, ci_level)
             except forecasting.ForecastError as exc:
@@ -93,7 +83,10 @@ def _statsmodels_forecasting(df, variables, method, time_granularity, aggregatio
             plotly_chart(
                 forecasting.forecast_figure(result, title, col, ci_level, anomalies)
             )
-            season_note = f"season of {season} steps" if season else "no seasonality (fewer than two full seasons)"
+            if method == forecasting.PROPHET:
+                season_note = "seasonalities chosen by Prophet"
+            else:
+                season_note = f"season of {season} steps" if season else "no seasonality (fewer than two full seasons)"
             anomaly_note = f" · {int(anomalies.sum())} anomalous points flagged" if anomalies is not None else ""
             st.caption(f"{len(series)} observations · {season_note}{anomaly_note}")
 
@@ -330,7 +323,7 @@ def time_series_analysis():
             st.info(f"🔢 Decomposition is univariate → using **{selected_col}**")
 
         decomposition_method = st.selectbox(
-            "Select Decomposition Method", ["Statsmodels"] + (["Prophet"] if PROPHET_AVAILABLE else []), index=0
+            "Select Decomposition Method", ["Statsmodels", "Prophet"], index=0
         )
 
         if decomposition_method == "Statsmodels":
@@ -342,6 +335,7 @@ def time_series_analysis():
             except Exception as e:
                 st.warning(f"Decomposition failed: {e}")
         else:
+            _prophet_note()
             df_prophet = df[[selected_col]].reset_index().rename(columns={df.index.name or 'date': 'ds', selected_col: 'y'})
             df_prophet['y'] = df_prophet['y'].ffill()
             try:
@@ -641,123 +635,24 @@ def time_series_analysis():
 
     elif analysis_section == "Forecasting":
         st.subheader(f"📈 Forecasting")
-        methods = (["Prophet"] if PROPHET_AVAILABLE else []) + list(forecasting.METHODS)
+        methods = [forecasting.PROPHET, *forecasting.METHODS]
         method = st.selectbox(
             "Model", methods,
-            help="Holt-Winters (ETS) and SARIMA come from statsmodels and also work in browser mode; "
-                 "Prophet needs a server (edalens.walk(df) or edalens.show()).",
+            help="All three also work in browser mode, where Prophet is a numpy version of its model.",
         )
+        if method == forecasting.PROPHET:
+            _prophet_note()
 
-        if method != "Prophet":
-            _statsmodels_forecasting(df, selected_vars, method, time_granularity, aggregation_method, resample_map)
-        elif use_multi and len(selected_vars) > 1:
-            st.info("🔢 Forecasting uses Prophet (univariate) → one tab per variable")
-            tabs = st.tabs(selected_vars)
-            for idx, col in enumerate(selected_vars):
-                with tabs[idx]:
-                    # Original Prophet forecasting code adapted for this variable
-                    df_prophet = df[[col]].reset_index()
-                    df_prophet = df_prophet.rename(columns={df_prophet.columns[0]: 'ds', col: 'y'})
-                    if time_granularity != "None":
-                        df_prophet = df_prophet.set_index('ds').resample(resample_map[time_granularity]).agg({'y': aggregation_method.lower()}).reset_index()
-                    df_prophet = df_prophet[['ds', 'y']].copy()
-                    df_prophet['y'] = df_prophet['y'].ffill()
-
-                    model = Prophet(yearly_seasonality=True, weekly_seasonality=True, daily_seasonality=True)
-                    model.fit(df_prophet)
-
-                    unit_map = {"Hourly": "hours", "Daily": "days", "Weekly": "weeks", "Monthly": "months",
-                                "Quarterly": "quarters", "Yearly": "years", "None": "days"}
-                    unit = unit_map.get(time_granularity, "days")
-
-                    if time_granularity == "None":
-                        forecast_period = st.slider(f"Select forecast period ({unit})", 1, 365, 30, format="%d", key=f"fp_{col}")
-                    elif time_granularity == "Hourly":
-                        forecast_period = st.slider(f"Select forecast period ({unit})", 24, 8760, 720, format="%d", key=f"fp_{col}")
-                    elif time_granularity == "Daily":
-                        forecast_period = st.slider(f"Select forecast period ({unit})", 7, 365, 30, format="%d", key=f"fp_{col}")
-                    elif time_granularity == "Weekly":
-                        forecast_period = st.slider(f"Select forecast period ({unit})", 1, 52, 4, format="%d", key=f"fp_{col}")
-                    elif time_granularity == "Monthly":
-                        forecast_period = st.slider(f"Select forecast period ({unit})", 1, 12, 3, format="%d", key=f"fp_{col}")
-                    elif time_granularity == "Quarterly":
-                        forecast_period = st.slider(f"Select forecast period ({unit})", 1, 4, 1, format="%d", key=f"fp_{col}")
-                    elif time_granularity == "Yearly":
-                        forecast_period = st.slider(f"Select forecast period ({unit})", 1, 5, 1, format="%d", key=f"fp_{col}")
-
-                    future = model.make_future_dataframe(periods=forecast_period, freq=resample_map.get(time_granularity, 'D'))
-                    forecast = model.predict(future)
-
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=df_prophet['ds'], y=df_prophet['y'], name='Historical Data', mode='lines'))
-                    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Forecast', mode='lines'))
-                    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], name='Upper Bound', mode='lines', line=dict(color='rgba(0,0,0,0)')))
-                    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], name='Lower Bound', mode='lines', line=dict(color='rgba(0,0,0,0)')))
-                    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], fill='tonexty', mode='none', fillcolor='rgba(0,100,80,0.2)', name='Confidence Interval'))
-
-                    fig.update_layout(
-                        title=f"Forecast for {col} ({aggregation_method if time_granularity != 'None' else 'Raw'})",
-                        xaxis_title="Date",
-                        yaxis_title=col,
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                    )
-                    plotly_chart(fig)
-        else:
-            # Original single-var forecasting code
-            df_prophet = df[[selected_col]].reset_index()
-            df_prophet = df_prophet.rename(columns={df_prophet.columns[0]: 'ds', selected_col: 'y'})
-            if time_granularity != "None":
-                df_prophet = df_prophet.set_index('ds').resample(resample_map[time_granularity]).agg({'y': aggregation_method.lower()}).reset_index()
-            df_prophet = df_prophet[['ds', 'y']].copy()
-            df_prophet['y'] = df_prophet['y'].ffill()
-
-            model = Prophet(yearly_seasonality=True, weekly_seasonality=True, daily_seasonality=True)
-            model.fit(df_prophet)
-
-            unit_map = {"Hourly": "hours", "Daily": "days", "Weekly": "weeks", "Monthly": "months",
-                        "Quarterly": "quarters", "Yearly": "years", "None": "days"}
-            unit = unit_map.get(time_granularity, "days")
-
-            if time_granularity == "None":
-                forecast_period = st.slider(f"Select forecast period ({unit})", 1, 365, 30, format="%d")
-            elif time_granularity == "Hourly":
-                forecast_period = st.slider(f"Select forecast period ({unit})", 24, 8760, 720, format="%d")
-            elif time_granularity == "Daily":
-                forecast_period = st.slider(f"Select forecast period ({unit})", 7, 365, 30, format="%d")
-            elif time_granularity == "Weekly":
-                forecast_period = st.slider(f"Select forecast period ({unit})", 1, 52, 4, format="%d")
-            elif time_granularity == "Monthly":
-                forecast_period = st.slider(f"Select forecast period ({unit})", 1, 12, 3, format="%d")
-            elif time_granularity == "Quarterly":
-                forecast_period = st.slider(f"Select forecast period ({unit})", 1, 4, 1, format="%d")
-            elif time_granularity == "Yearly":
-                forecast_period = st.slider(f"Select forecast period ({unit})", 1, 5, 1, format="%d")
-
-            future = model.make_future_dataframe(periods=forecast_period, freq=resample_map.get(time_granularity, 'D'))
-            forecast = model.predict(future)
-
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df_prophet['ds'], y=df_prophet['y'], name='Historical Data', mode='lines'))
-            fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name='Forecast', mode='lines'))
-            fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], name='Upper Bound', mode='lines', line=dict(color='rgba(0,0,0,0)')))
-            fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], name='Lower Bound', mode='lines', line=dict(color='rgba(0,0,0,0)')))
-            fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], fill='tonexty', mode='none', fillcolor='rgba(0,100,80,0.2)', name='Confidence Interval'))
-
-            fig.update_layout(
-                title=f"Forecast for {selected_col} ({aggregation_method if time_granularity != 'None' else 'Raw'})",
-                xaxis_title="Date",
-                yaxis_title=selected_col,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            plotly_chart(fig)
+        variables = selected_vars if use_multi and len(selected_vars) > 1 else [selected_col]
+        _forecasting(df, variables, method, time_granularity, aggregation_method, resample_map)
 
     # ============================================================
     # CHANGEPOINT ANALYSIS WITH PROPHET
     # ============================================================
     elif analysis_section == "Changepoint Analysis":
-        _require_prophet("Changepoint Analysis")
 
         st.subheader("🔍 Changepoint Analysis (Prophet)")
+        _prophet_note()
 
 
         # --------------------------------------------------------

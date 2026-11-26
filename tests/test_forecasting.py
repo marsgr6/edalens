@@ -102,3 +102,26 @@ def test_figure_shows_observed_fit_forecast_interval_and_anomalies():
         "Anomaly (Isolation Forest)",
     ]
     assert len(fig.data[-1].x) == int(flagged.sum())
+
+
+def test_prophet_takes_uneven_dates_and_flags_anomalies():
+    pytest.importorskip("prophet")
+    rng = np.random.default_rng(0)
+    days = np.sort(rng.choice(np.arange(400), 120, replace=False))  # No regular grid.
+    values = np.sin(days / 20) * 10 + 50
+    values[30] += 60  # A spike the model does not expect.
+    series = pd.Series(
+        values, index=pd.Timestamp("2022-01-01") + pd.to_timedelta(days, "D")
+    )
+    with pytest.raises(fc.ForecastError):
+        fc.regular_series(series)
+    ready = fc.prophet_series(series)
+    result = fc.fit_forecast(ready, fc.PROPHET, 10, None, 90)
+    assert (
+        result["observed"].notna().sum() == 120
+        and result["forecast"].notna().sum() == 10
+    )
+    future = result.dropna(subset=["forecast"])
+    assert (future["lower"] <= future["upper"]).all()
+    flags = fc.residual_anomalies(result, 0.02)
+    assert flags.loc[series.index[30]]

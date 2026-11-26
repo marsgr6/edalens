@@ -73,6 +73,10 @@ def describe_operation(operation: Operation) -> str:
         return f"Ordered {operation['column']}: {', '.join(map(str, operation['order']))}"
     if op_type == "drop_duplicates":
         return "Removed duplicate rows"
+    if op_type == "set_index":
+        return f"Used {operation['column']} as the row index"
+    if op_type == "reset_index":
+        return "Moved the row index back to a column"
     if op_type == "remove_outliers":
         return (f"Removed {operation['method']} outliers (threshold {operation['threshold']}) in "
                 f"{', '.join(map(str, operation['columns']))}")
@@ -448,6 +452,32 @@ def _remove_outliers(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
     return result.copy()
 
 
+def _set_index(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    column = operation["column"]
+    _require_columns(df, [column], "Index column")
+    if df[column].isna().any():
+        raise OperationError(f"'{column}' has missing values; an index needs a label on every row.")
+    if not df[column].is_unique:
+        raise OperationError(f"'{column}' has repeated values; an index needs a different label on every row.")
+    # The old index is kept as a column when it carries labels (not 0, 1, 2, ...).
+    result = df if _default_index(df) else df.rename_axis(df.index.name or "index").reset_index()
+    return result.set_index(column)
+
+
+def _reset_index(df: pd.DataFrame, operation: Operation) -> pd.DataFrame:
+    if _default_index(df):
+        raise OperationError("The data has no row index to move.")
+    name = df.index.name or "index"
+    if name in df.columns:
+        raise OperationError(f"A column named '{name}' already exists.")
+    return df.rename_axis(name).reset_index()
+
+
+def _default_index(df: pd.DataFrame) -> bool:
+    """True for the plain 0, 1, 2, ... index pandas gives (or one left by filtering rows)."""
+    return df.index.name is None and ptypes.is_integer_dtype(df.index) and not isinstance(df.index, pd.MultiIndex)
+
+
 _HANDLERS: dict[str, Callable[[pd.DataFrame, Operation], pd.DataFrame]] = {
     "select_columns": _select_columns,
     "cast_types": _cast_types,
@@ -465,6 +495,8 @@ _HANDLERS: dict[str, Callable[[pd.DataFrame, Operation], pd.DataFrame]] = {
     "category_order": _category_order,
     "drop_duplicates": _drop_duplicates,
     "remove_outliers": _remove_outliers,
+    "set_index": _set_index,
+    "reset_index": _reset_index,
 }
 
 
