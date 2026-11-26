@@ -193,7 +193,9 @@ def walk_browser(
     if display and _in_notebook():
         app.display()
     elif display:
-        print("Not in a notebook, so nothing is shown: use .save('page.html'), or edalens.show(df, mode='browser').")
+        print(
+            "Not in a notebook, so nothing is shown: use .save('page.html'), or edalens.show(df, mode='browser')."
+        )
     return app
 
 

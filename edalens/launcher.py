@@ -128,7 +128,9 @@ class EDALensServer:
         # Where the app's "Send to Python" button saves reports (see reports()).
         self.report_dir: Optional[Path] = None
         self._process: Optional[subprocess.Popen] = None
-        self.data_path: Optional[Path] = None  # A preloaded DataFrame (show(df)), deleted on stop.
+        self.data_path: Optional[Path] = (
+            None  # A preloaded DataFrame (show(df)), deleted on stop.
+        )
 
     @property
     def running(self) -> bool:
@@ -314,7 +316,9 @@ def show(
         if isinstance(df, pd.Series):
             df = df.to_frame()
         if not isinstance(df, pd.DataFrame):
-            raise TypeError(f"show() expects a pandas DataFrame or Series, not {type(df).__name__}.")
+            raise TypeError(
+                f"show() expects a pandas DataFrame or Series, not {type(df).__name__}."
+            )
     if mode == "browser":
         from edalens.browser import serve_browser
 
@@ -430,7 +434,10 @@ def _run(args: argparse.Namespace) -> int:
         return 1
     print(f"EDALens is running at {server.url}", flush=True)
     if browser:
-        print("Python runs in the browser tab; the first start downloads it (20-60 s).", flush=True)
+        print(
+            "Python runs in the browser tab; the first start downloads it (20-60 s).",
+            flush=True,
+        )
     print("Press Ctrl+C to stop.", flush=True)
     try:
         code = server.wait()
